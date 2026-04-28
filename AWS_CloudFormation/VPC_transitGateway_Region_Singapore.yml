@@ -1,0 +1,172 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
+
+Resources:
+  SingaporeVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.2.0.0/16
+      Tags:
+        - Key: Name
+          Value: Singapore-VPC
+          
+  SingaporeIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Singapore-IGW
+          
+  SingaporeIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref SingaporeIGW
+      VpcId: !Ref SingaporeVPC
+  
+  SingaporePublicSN1:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.2.1.0/24
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-SN1
+
+  SingaporePublicSN2:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.2.2.0/24
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-SN2
+
+  SingaporePublicRT:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-RT
+          
+  DefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SingaporeIGW
+      
+  SingaporePublicRT2:     #연동용 서브넷 RT
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: SingaporePublicRT2
+  
+  SingaporeRouteTableAssociation:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      SubnetId: !Ref SingaporePublicSN1
+      
+  SingaporeRouteTableAssociation2:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      SubnetId: !Ref SingaporePublicSN2
+      
+  SingaporeSG:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref SingaporeVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  SingaporeEC2:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref SingaporePublicSN1
+          GroupSet:
+            - !Ref SingaporeSG
+          AssociatePublicIpAddress: true     #공인IP할당
+          PrivateIpAddress: 10.2.1.10
+ 
+  #TGW Resource 추가
+  TransitGateway1:     #AWS Transit Gateway 생성
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      # DefaultRouteTableAssociation: disable     #기본 TGW RT 생성안하도록 
+      # DefaultRouteTablePropagation: disable     #Attachment에서 온 CIDR을 TGW Route Table에 자동 등록 안 하게 하는 옵션
+      Tags:
+        - Key: Name
+          Value: TGW1
+          
+  TransitGatewayAtt1:     #TGW 연결 생성 1
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: SingaporeVPC
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      SubnetIds:
+        - !Ref SingaporePublicSN2
+      TransitGatewayId: !Ref TransitGateway1
+      Tags:
+        - Key: Name
+          Value: TGW-ATT1--Singapore-VPC
+          
+  TGWRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: TransitGatewayAtt1
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayId: !Ref TransitGateway1
+      
+  TGWStacticRoute:
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayRouteTableId: tgw-rtb-0e666fcd2e56ee0d3
+      TransitGatewayAttachmentId: tgw-attach-00be23a3e30341d61
+ 
+Outputs:     #각 EC2 Public&Private IP 추출
+  PublicEC2:
+    Description: PUBLIC IP of 
+    Value: !GetAtt SingaporeEC2.PublicIp
+  SingaporeTransitGatewayID:     # 싱가폴 transitgateway ID 추출 
+    Description: Singapore TransitGateway ID
+    Value: !Ref TransitGateway1

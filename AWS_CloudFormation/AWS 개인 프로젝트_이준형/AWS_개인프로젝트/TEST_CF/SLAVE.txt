@@ -1,0 +1,121 @@
+SLAVE
+===================
+
+yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-6.noarch.rpm
+rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
+CF)  rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2023
+yum update -y
+yum install -y mysql-server
+systemctl enable --now mysqld
+systemctl restart mysqld
+firewall-cmd --permanent --add-service=mysql
+firewall-cmd --reload
+========================================================
+PHP 설치
+yum install -y php php-mysql
+========================================================
+
+vim /etc/my.cnf 아래 내용 삽입
+
+collation-server=utf8mb4_general_ci
+character-set-server=utf8mb4
+validate_password.policy=LOW
+default_authentication_plugin=mysql_native_password
+
+server-id=2
+read_only = 1
+
+[client]
+#default-character-set=utf8mb4
+
+[mysql]
+#default-character-set=utf8mb4
+===========================
+
+systemctl restart mysqld
+
+grep 'temporary password' /var/log/mysqld.log  => 임시 비밀번호 확인
+mysql_secure_installation  => password 설정 진행
+
+==
+-- 1. Slave 서버 MySQL 접속 (root로)
+mysql -u root -p
+-- 2. localhost 전용 user1 계정 생성 (비밀번호: p@ssw0rd)
+CREATE USER IF NOT EXISTS 'user1'@'localhost' IDENTIFIED BY 'p@ssw0rd';
+-- 3. sqlDB 데이터베이스에 대한 모든 권한 부여
+GRANT ALL PRIVILEGES ON sqlDB.* TO 'user1'@'localhost';
+-- 4. 변경 사항 적용
+FLUSH PRIVILEGES;
+-- 5. (확인용) user1 | localhost가 생겼는지 확인
+SELECT user, host FROM mysql.user;
+
+복제 전용 계정 생성 및 권한 부여
+-- 192.168.111.200(Slave) 접속 허용
+CREATE USER IF NOT EXISTS 'user1'@'192.168.111.200' IDENTIFIED BY 'p@ssw0rd';
+-- 복제 권한(REPLICATION SLAVE) 부여
+GRANT REPLICATION SLAVE ON *.* TO 'user1'@'192.168.111.200';
+FLUSH PRIVILEGES;
+
+
+
+데이터 덤프(백업) 생성 (Master 리눅스 터미널에서)
+sudo mysqldump -u root -p --master-data=2 --databases sqlDB > sqlDB_backup.sql
+
+복제 시작점(File, Position) 확인
+SHOW MASTER STATUS;
+
+백업 파일을 Slave로 전송
+-------------scp sqlDB_backup.sql root@10.4.1.100:/ec2-user/
+sudo chmod 400 mykey.pem   (slave key임)
+sudo scp -i mykey.pem sqlDB_backup.sql ec2-user@10.4.1.100:/home/ec2-user/
+
+sudo mysql -u root -p < /home/ec2-user/sqlDB_backup.sql
+
+SLAVE에서
+sudo mysql -u root -p < /home/ec2-user/sqlDB_backup.sql
+
+CREATE USER 'slave'@'%' IDENTIFIED BY 'p@ssw0rd';
+GRANT REPLICATION SLAVE ON*.*TO 'slave'@'%';
+FLUSH PRIVILEGES;
+
+CREATE USER 'test'@'%' IDENTIFIED BY 'p@ssw0rd';
+GRANT REPLICATION SLAVE ON*.*TO 'test'@'%';
+FLUSH PRIVILEGES;
+
+
+
+-- 아까 1단계-3번에서 메모한 정보를 여기에 넣습니다.
+STOP SLAVE;
+
+CHANGE MASTER TO
+  MASTER_HOST='10.2.1.100',
+  MASTER_USER='slave',
+  MASTER_PASSWORD='p@ssw0rd',
+  MASTER_LOG_FILE='mysql-bin.000001',
+  MASTER_LOG_POS=4150;
+
+START SLAVE;
+
+START SLAVE;
+-- 1초 뒤에 아래 명령어로 확인
+SHOW SLAVE STATUS\G
+-- Slave_IO_Running: Yes, Slave_SQL_Running: Yes 확인!
+
+==================
+레미 설치 
+yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+yum install -y yum-utils
+sudo yum-config-manager --disable 'remi-php*'
+sudo yum-config-manager --enable remi-php74
+yum install -y php php-cli php-common pjp-fpm php-mysqlnd php-mbstring
+
+systemctl restart httpd
+
+=========
+php 및 html 넣고
+필요시 옮기기 cp /home/user1/* /var/www/html/
+
+# 80번 포트(HTTP) 영구 허용
+firewall-cmd --permanent --add-service=http
+# 설정 반영
+firewall-cmd --reload

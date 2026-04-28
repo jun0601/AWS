@@ -1,0 +1,487 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
+
+Resources:
+  TESTVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: TEST-VPC
+          
+  TESTIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TEST-IGW
+          
+  TESTIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref TESTIGW
+      VpcId: !Ref TESTVPC
+      
+  TESTVPC2:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.1.0.0/16
+      Tags:
+        - Key: Name
+          Value: TEST-VPC2
+          
+  TESTIGW2:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TEST-IGW2
+          
+  TESTIGWAttachment2:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref TESTIGW2
+      VpcId: !Ref TESTVPC2
+
+#################IDC      
+  IDCVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.2.0.0/16
+      Tags:
+        - Key: Name
+          Value: IDC-VPC
+          
+  IDCIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TEST-IGW
+          
+  IDCIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IDCIGW
+      VpcId: !Ref IDCVPC
+      
+  IDCPublicSN:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IDCVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.2.1.0/24
+      Tags:
+        - Key: Name
+          Value: IDC-Public-SN1
+  
+  IDCPublicRT:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IDCVPC
+      Tags:
+        - Key: Name
+          Value: IDC-Public-RT
+          
+  IDCDefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: IDCIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref IDCPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IDCIGW
+      
+  
+  IDCPublicSNRouteTableAssociation:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref IDCPublicRT
+      SubnetId: !Ref IDCPublicSN
+      
+  IDCCGWENI:     # ENI 생성 
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref IDCPublicSN
+      PrivateIpAddress: 10.2.1.30
+      GroupSet:
+        - !Ref TESTSecurityGroup3
+          
+  CGWEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  CGWEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    DependsOn: IDCPublicEC2
+    Properties:
+      AllocationId: !GetAtt CGWEIP.AllocationId
+      NetworkInterfaceId: !Ref IDCCGWENI
+      
+  IDCPublicEC2:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: ami-06b18c6a9a323f75f     #로키 9 이미지  <- 싱가폴 할때는 확인해봐야 될듯 
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-Public-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref IDCCGWENI 
+
+  
+#################IDC    
+  TESTPublicSN1:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TESTVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: TEST-Public-SN1
+          
+  TESTPublicSN2:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TESTVPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ] 
+      CidrBlock: 10.0.2.0/24
+      Tags:
+        - Key: Name
+          Value: TEST-Public-SN2
+          
+  TESTPublicSN3:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TESTVPC2
+      AvailabilityZone: !Select [ 0, !GetAZs '' ] 
+      CidrBlock: 10.1.1.0/24
+      Tags:
+        - Key: Name
+          Value: TEST-Public-SN3
+          
+  TESTPublicSN4:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TESTVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ] 
+      CidrBlock: 10.0.3.0/24
+      Tags:
+        - Key: Name
+          Value: TEST-Public-SN4
+
+  TESTPublicRT1:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TESTVPC
+      Tags:
+        - Key: Name
+          Value: TEST-Public-RT
+          
+  DefaultPublicRoute1:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TESTIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref TESTPublicRT1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TESTIGW
+      
+  
+  TESTPublicSNRouteTableAssociation1:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TESTPublicRT1
+      SubnetId: !Ref TESTPublicSN1
+      
+  TESTPublicRT2:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TESTVPC
+      Tags:
+        - Key: Name
+          Value: TEST-Public-RT2
+          
+  DefaultPublicRoute2:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TESTIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref TESTPublicRT2
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TESTIGW
+      
+  
+  TESTPublicSNRouteTableAssociation2:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TESTPublicRT2
+      SubnetId: !Ref TESTPublicSN2
+      
+  TESTPublicRT3:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TESTVPC2
+      Tags:
+        - Key: Name
+          Value: TEST-Public-RT3
+          
+  DefaultPublicRoute3:     #퍼블릭 RT에 기본 인터넷    경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TESTIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref TESTPublicRT3
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TESTIGW2
+      
+  
+  TESTPublicSNRouteTableAssociation3:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TESTPublicRT3
+      SubnetId: !Ref TESTPublicSN3
+      
+  TESTPublicRT4:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TESTVPC
+      Tags:
+        - Key: Name
+          Value: TEST-Public-RT4
+          
+  DefaultPublicRoute4:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TESTIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref TESTPublicRT4
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TESTIGW
+      
+  
+  TESTPublicSNRouteTableAssociation4:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TESTPublicRT4
+      SubnetId: !Ref TESTPublicSN4
+      
+      
+  TESTSecurityGroup:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref TESTVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '2049'
+          ToPort: '2049'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  TESTSecurityGroup2:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref TESTVPC2
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '2049'
+          ToPort: '2049'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  TESTSecurityGroup3:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref IDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '2049'
+          ToPort: '2049'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  TESTPublicEC21:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Test-Public-EC21
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TESTPublicSN1
+          GroupSet:
+            - !Ref TESTSecurityGroup
+          AssociatePublicIpAddress: true     #공인IP할당
+          PrivateIpAddress: 10.0.1.30     # 사설 IP 직접 할당 
+          
+  TESTPublicEC22:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Test-Public-EC22
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TESTPublicSN1
+          GroupSet:
+            - !Ref TESTSecurityGroup
+          AssociatePublicIpAddress: true     #공인IP할당
+          PrivateIpAddress: 10.0.1.31     # 사설 IP 직접 할당 
+          
+  TESTPublicEC23:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Test-Public-EC23
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TESTPublicSN3
+          GroupSet:
+            - !Ref TESTSecurityGroup2
+          AssociatePublicIpAddress: true     #공인IP할당
+          PrivateIpAddress: 10.1.1.15     # 사설 IP 직접 할당 
+          
+####################
+  VPCPeering:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties:
+      VpcId: !Ref TESTVPC
+      PeerVpcId: !Ref TESTVPC2
+      Tags:
+        - Key: Name
+          Value: VPCPeering
+      
+  PeeringRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 10.1.0.0/16
+      RouteTableId: !Ref TESTPublicRT1
+      VpcPeeringConnectionId: !Ref VPCPeering
+      
+  PeeringRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 10.0.0.0/16
+      RouteTableId: !Ref TESTPublicRT3
+      VpcPeeringConnectionId: !Ref VPCPeering
+
+###############VPN
+  VPC2VPNGW:     #AWS 쪽 Virtual Private Gateway 생성
+    Type: AWS::EC2::VPNGateway
+    Properties:
+      Type: ipsec.1
+      AmazonSideAsn: 64512
+      Tags:
+        - Key: Name
+          Value: AWS-VPNGW
+          
+  VPC2AttachVPNGW:     #VPN Gateway를 VPC에 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref TESTVPC
+      VpnGatewayId: !Ref VPC2VPNGW
+      
+  VPC2CGW:     #온프레미스 VPN 장비를 AWS에 등록
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65010
+      IpAddress: !Ref CGWEIP     
+      Tags:
+        - Key: Name
+          Value: IDC-VPN-CGW
+          
+  VPCAWSVpnConnection:     #AWS ↔ IDC VPN 터널 생성
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      Type: ipsec.1
+      CustomerGatewayId: !Ref VPC2CGW
+      VpnGatewayId: !Ref VPC2VPNGW
+      VpnTunnelOptionsSpecifications:
+        - PreSharedKey: cloudneta
+          TunnelInsideCidr: 169.254.178.132/30
+        - PreSharedKey: cloudneta
+          TunnelInsideCidr: 169.254.154.168/30
+      Tags:
+        - Key: Name
+          Value: AWS-VPNConnection-IDC
+          
+  VPNAWSGatewayRoutePropagation:     #VPN에서 받은 라우트를 Route Table에 자동 추가
+    Type: AWS::EC2::VPNGatewayRoutePropagation
+    DependsOn: VPC2AttachVPNGW
+    Properties:
+      RouteTableIds:
+        - !Ref TESTPublicRT1
+      VpnGatewayId: !Ref VPC2VPNGW
+    
+Outputs:     #각 EC2 Public&Private IP 추출
+  PublicEC21:
+    Description: PUBLIC IP of 
+    Value: !GetAtt TESTPublicEC21.PublicIp
+  PublicEC22:
+    Description: PUBLIC IP of 
+    Value: !GetAtt TESTPublicEC22.PublicIp
+  PublicEC23:
+    Description: PUBLIC IP of 
+    Value: !GetAtt TESTPublicEC23.PublicIp

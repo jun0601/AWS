@@ -1,0 +1,176 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+Resources:
+  CloudVPC:     #VPC 생성 
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true     #VPC에서 AWS 제공 DNS 서버를 사용할 수 있게 허용하는 옵션.
+      EnableDnsHostnames: true     #퍼블릭 IP가 있는 인스턴스에 자동으로 퍼블릭 DNS 이름을 생성해줄지 여부
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: Cloud-VPC
+          
+  CloudIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Cloud-IGW
+          
+  CloudIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref CloudIGW
+      VpcId: !Ref CloudVPC
+  
+  CloudPublicSN:     # 퍼블릭 SN 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:  !Ref CloudVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ] # 첫번째 가용구역 선택
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: Cloud-Public-SN
+           
+  CloudPrivateSN:    # private SN 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CloudVPC
+      AvailabilityZone: !Select [ 2, !GetAZs ''] #현재 리전에서 3번째 가용영역 선택
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: Cloud-Private-SN
+          
+  CloudPublicRT:     #퍼블릭 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CloudVPC
+      Tags:
+        - Key : Name
+          Value: Cloud-Public-RT
+          
+  DefaultPublicRoute:     # 생성한 퍼블릭 라우팅테이블에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: CloudIGWAttachment     # 위에서 생성한 CloudIGWAttachment가 먼저 실행되도록 하는 부분
+    Properties:
+      RouteTableId: !Ref CloudPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CloudIGW
+  
+    
+  CloudPrivateRT:     # 프라이븟 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CloudVPC
+      Tags:
+        - Key: Name
+          Value: Cloud-Private-RT
+  
+  CloudPublicSNRouteTableAssociation:     #Public 서브넷 라우팅테이블 연결하기
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref CloudPublicRT
+      SubnetId: !Ref CloudPublicSN
+ 
+  CloudPrivateSNRouteTableAssociation:     #Private 서브넷 라우팅테이블 연결하기
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref CloudPrivateRT
+      SubnetId: !Ref CloudPrivateSN
+  
+  CloudSecurityGroup:     #보안그룹 설정
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref CloudVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+  
+  CloudPublicEC2:     #퍼블릭 EC2 생성한
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Cloud-Public-EC2
+      NetworkInterfaces:   #ENI 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref CloudPublicSN
+          GroupSet:
+            - !Ref CloudSecurityGroup
+          AssociatePublicIpAddress: true    #공인IP할당
+      
+  CloudPrivateEC2:     #Private EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Cloud-Private-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref CloudPrivateSN
+          GroupSet:
+            - !Ref CloudSecurityGroup
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+            service sshd restart    
+
+  Endpoint:     #S3 Gateway VPC Endpoint 생성
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      RouteTableIds:
+        - !Ref CloudPublicRT
+        - !Ref CloudPrivateRT
+      VpcId: !Ref CloudVPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'     #현재 리전의 S3 서비스 지정  (com.amazonaws.ap-northeast-2.s3)
+  
+  Endpoint1:     #CloudFormation Interface VPC Endpoint 생성
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref CloudVPC
+      VpcEndpointType: 'Interface'
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref CloudPublicSN
+        - !Ref CloudPrivateSN
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.cloudformation'
+  
+Outputs:     # 각 EC2 IP 추출하기
+  PublicEc2:
+    Description: Public IP assigned to VPC2 Instance1 eth0 interface
+    Value: !GetAtt CloudPublicEC2.PublicIp
+  privateEc2:
+    Description: Private IP assigned to VPC2 Instance1 eth0 interface
+    Value: !GetAtt CloudPrivateEC2.PrivateIp
+  

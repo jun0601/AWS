@@ -1,0 +1,272 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+Resources:
+  MyVPC:     #VPC 생성 
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true     #VPC에서 AWS 제공 DNS 서버를 사용할 수 있게 허용하는 옵션.
+      EnableDnsHostnames: true     #퍼블릭 IP가 있는 인스턴스에 자동으로 퍼블릭 DNS 이름을 생성해줄지 여부
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: My-VPC
+          
+  CustomVPC:     #Custom VPC 생성 
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true     #VPC에서 AWS 제공 DNS 서버를 사용할 수 있게 허용하는 옵션.
+      EnableDnsHostnames: true     #퍼블릭 IP가 있는 인스턴스에 자동으로 퍼블릭 DNS 이름을 생성해줄지 여부
+      CidrBlock: 20.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: Custom-VPC
+          
+  MyIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-IGW
+          
+  CustomIGW:     #Custom VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Custom-IGW
+          
+  CloudIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref MyIGW
+      VpcId: !Ref MyVPC
+      
+  CloudIGWAttachment2:     #Custom IGW를 Custom VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref CustomIGW
+      VpcId: !Ref CustomVPC
+      
+  MyPublicSN:     # 퍼블릭 SN 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:  !Ref MyVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ] # 첫번째 가용구역 선택
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: My-Public-SN
+          
+  CustomPublicSN:     # Custom SN 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:  !Ref CustomVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ] # 첫번째 가용구역 선택
+      CidrBlock: 20.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: Custom-Public-SN
+          
+  MyPublicRT:     #퍼블릭 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key : Name
+          Value: My-Public-RT
+          
+  CustomPublicRT:     #Custom 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CustomVPC
+      Tags:
+        - Key : Name
+          Value: Custom-Public-RT
+          
+  DefaultPublicRoute:     # 생성한 퍼블릭 라우팅테이블에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: CloudIGWAttachment     # 위에서 생성한 CloudIGWAttachment가 먼저 실행되도록 하는 부분
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIGW
+      
+  DefaultPublicRoute2:     # 생성한 Custom 퍼블릭 라우팅테이블에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: CloudIGWAttachment2     # 위에서 생성한 CloudIGWAttachment가 먼저 실행되도록 하는 부분
+    Properties:
+      RouteTableId: !Ref CustomPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CustomIGW
+      
+  MyPublicSNRouteTableAssociation:     #Public 서브넷 라우팅테이블 연결하기
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      SubnetId: !Ref MyPublicSN
+      
+  CustomPublicSNRouteTableAssociation:     #Custom Public 서브넷 Custom 라우팅테이블 연결하기
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref CustomPublicRT
+      SubnetId: !Ref CustomPublicSN
+      
+  CloudSecurityGroup:     #보안그룹 설정
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  CloudSecurityGroup2:     #보안그룹 설정
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref CustomVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  MyEC2:     #퍼블릭 EC2 생성한
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: My-EC2
+      NetworkInterfaces:   #ENI 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref MyPublicSN
+          GroupSet:
+            - !Ref CloudSecurityGroup
+          AssociatePublicIpAddress: true    #공인IP할당
+          
+  CustomWEB1:     #Custom EC2 생성하기 1
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: CustomWEB1-EC2
+      NetworkInterfaces:   #ENI 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref CustomPublicSN
+          GroupSet:
+            - !Ref CloudSecurityGroup2
+          AssociatePublicIpAddress: true    #공인IP할당
+      
+  CustomWEB2:     #Custom EC2 생성하기 2
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: CustomWEB2-EC2
+      NetworkInterfaces:   #ENI 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref CustomPublicSN
+          GroupSet:
+            - !Ref CloudSecurityGroup2
+          AssociatePublicIpAddress: true    #공인IP할당
+          
+  CustomNLBTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: Custom-NLB-TG
+      Port: 80
+      Protocol: TCP
+      VpcId: !Ref CustomVPC
+      Targets:
+        - Id: !Ref CustomWEB1
+          Port: 80
+        - Id: !Ref CustomWEB2
+          Port: 80
+          
+  CustomNLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: CloudIGWAttachment2
+    Properties:
+      Type: network
+      Scheme: internet-facing
+      Subnets:
+        - !Ref CustomPublicSN
+      Tags:
+        - Key: Name
+          Value: Custom-NLB
+  
+  NLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref CustomNLBTG
+      LoadBalancerArn: !Ref CustomNLB
+      Port: 80
+      Protocol: TCP
+    
+  EndpointService:
+    Type: AWS::EC2::VPCEndpointService
+    Properties:
+      NetworkLoadBalancerArns:
+        - !Ref CustomNLB
+      AcceptanceRequired: false
+      Tags:
+        - Key: Name
+          Value: soldesk-EP-service
+      
+  Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref MyVPC
+      VpcEndpointType: 'Interface'
+      SubnetIds:
+        - !Ref MyPublicSN
+      SecurityGroupIds:
+        - !Ref CloudSecurityGroup
+      ServiceName: !Sub
+        - 'com.amazonaws.vpce.${AWS::Region}.${EndpointService}'
+        -  EndpointService: !Ref EndpointService
+      
+
+Outputs:     # 각 EC2 IP 추출하기
+  MyEc2:
+    Description: Public IP assigned to VPC2 Instance1 eth0 interface
+    Value: !GetAtt MyEC2.PublicIp
+  CustomEc2:
+    Description: test1
+    Value: !GetAtt CustomWEB1.PublicIp
+  CustomEc22:
+    Description: test2
+    Value: !GetAtt CustomWEB2.PublicIp

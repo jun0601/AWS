@@ -1,0 +1,446 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+Resources:
+  ELBVPC:     #ELB VPC 생성가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: ELB-VPC
+          
+  MyVPC:     #My VPC 생성가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 20.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: ELB-VPC
+          
+  ELBIGW:     #ELB VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ELB-IGW
+          
+  MyIGW:     #MY VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-IGW
+          
+  ELBIGWAttachment:     #ELBIGW를 ELBVPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref ELBIGW
+      VpcId: !Ref ELBVPC
+      
+  MyIGWAttachment:     #MyIGW를 MyVPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref MyIGW
+      VpcId: !Ref MyVPC
+  
+  ELBPublicSN1:     #ELB Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ELBVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: ELB-Public-SN1
+          
+  ELBPublicSN2:     #ELB Public 2서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ELBVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: ELB-Public-SN2
+          
+  MyPublicSN:     #My Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 20.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: My-Public-SN1
+
+  # CloudNetaPrivateSN:     #Private 서브넷 생성
+    # Type: AWS::EC2::Subnet
+    # Properties:
+      # VpcId: !Ref CloudNetaVPC
+      # AvailabilityZone: !Select [ 2, !GetAZs '' ]     #현재 리전의 세 번째 AZ 목록 반환 (가용 영역 C)
+      # CidrBlock: 10.0.1.0/24
+      # Tags:
+        # - Key: Name
+          # Value: CloudNeta-Private-SN         
+
+  ELBPublicRT:     #ELB퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ELBVPC
+      Tags:
+        - Key: Name
+          Value: ELB-Public-RT
+          
+  MyPublicRT:     #My퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: My-Public-RT
+          
+  ELBDefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: ELBIGWAttachment     #ELBIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref ELBPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ELBIGW
+      
+  MyDefaultPublicRoute:     #My 퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: MyIGWAttachment     #ELBIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIGW
+      
+  # CloudNetaPrivateRT:     #프라이빗 서브넷용 라우팅 테이블
+    # Type: AWS::EC2::RouteTable
+    # Properties:
+      # VpcId: !Ref CloudNetaVPC
+      # Tags:
+        # - Key: Name
+          # Value: CloudNeta-Private-RT
+  
+  ELBPublicSNRouteTableAssociation1:     #ELBPublic 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ELBPublicRT
+      SubnetId: !Ref ELBPublicSN1
+      
+  ELBPublicSNRouteTableAssociation2:     #ELBPublic2 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ELBPublicRT
+      SubnetId: !Ref ELBPublicSN2
+      
+  MyPublicSNRouteTableAssociation:     #MyPublic 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      SubnetId: !Ref MyPublicSN
+      
+  # CloudNetaPrivateSNRouteTableAssociation:     #Private 서브넷을 Private 라우팅 테이블에 연결
+    # Type: AWS::EC2::SubnetRouteTableAssociation
+    # Properties:
+      # RouteTableId: !Ref CloudNetaPrivateRT
+      # SubnetId: !Ref CloudNetaPrivateSN
+      
+  ELBSecurityGroup:     #ELB EC2 인스턴스에 적용되는 가상 방화벽
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref ELBVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '25'
+          ToPort: '25'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '161'
+          ToPort: '161'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  MySecurityGroup:     #ELB EC2 인스턴스에 적용되는 가상 방화벽
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '25'
+          ToPort: '25'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '161'
+          ToPort: '161'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  ELBEc21:     #ELB Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: ELB-Public-EC21
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref ELBPublicSN1
+          GroupSet:
+            - !Ref ELBSecurityGroup
+          AssociatePublicIpAddress: true     #공인IP할당
+          
+  ELBEc22:     #ELB Public2 EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: ELB-Public-EC22
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref ELBPublicSN2
+          GroupSet:
+            - !Ref ELBSecurityGroup
+          AssociatePublicIpAddress: true     #공인IP할당
+          
+  MyEc2:     #My Public2 EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: My-Public-EC22
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref MyPublicSN
+          GroupSet:
+            - !Ref MySecurityGroup
+          AssociatePublicIpAddress: true     #공인IP할당
+          
+  NLBTG1:     #ELB 네트워크로드밸런서 대상 그룹 (SNMP)
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: NLB-TG1
+      Port: 161
+      Protocol: UDP
+      HealthCheckPort: 80
+      VpcId: !Ref ELBVPC
+      Targets:
+        - Id: !Ref ELBEc21
+          Port: 161
+        - Id: !Ref ELBEc22
+          Port: 161
+          
+  NLBTG2:     #ELB 네트워크로드밸런서 대상 그룹 (HTTP)
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: NLB-TG2
+      Port: 80
+      Protocol: TCP
+      HealthCheckPort: 80
+      VpcId: !Ref ELBVPC
+      Targets:
+        - Id: !Ref ELBEc21
+          Port: 80
+        - Id: !Ref ELBEc22
+          Port: 80
+          
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: ELBIGWAttachment
+    Properties:
+      Type: network
+      Name: My-NLB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref ELBPublicSN1
+        - !Ref ELBPublicSN2
+      SecurityGroups:
+        - !Ref ELBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: Custom-NLB
+          
+  NLBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBTG2
+      LoadBalancerArn: !Ref NLB
+      Port: 80
+      Protocol: TCP
+      
+  NLBListener1:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBTG1
+      LoadBalancerArn: !Ref NLB
+      Port: 161
+      Protocol: UDP
+      
+  ALBTargetGroup:     # ALB 대상 그룹
+    Type: AWS::ElasticLoadBalancingV2::TargetGorup
+    Properties:
+      Name: My-ALB-TG
+      Port:80
+      Protocol: HTTP
+      VpcId: !Ref ELBVPC
+      Targes:
+        - Id: !Ref ELBEc21
+          Port: 80
+        - Id: !Ref ELBEc22
+          Port: 80
+          
+  ALBTargetGroupDev:     # ALB 대상 그룹 - dev
+    Type: AWS::ElasticLoadBalancingV2::TargetGorup
+    Properties:
+      Name: My-ALB-TG-DEV
+      Port:80
+      Protocol: HTTP
+      VpcId: !Ref ELBVPC
+      Targes:
+        - Id: !Ref ELBEc21
+          Port: 80
+          
+  ALBTargetGroupMgt:     # ALB 대상 그룹 - mgt
+    Type: AWS::ElasticLoadBalancingV2::TargetGorup
+    Properties:
+      Name: My-ALB-TG-Mgt
+      Port:80
+      Protocol: HTTP
+      VpcId: !Ref ELBVPC
+      Targes:
+        - Id: !Ref ELBEc22
+          Port: 80
+          
+
+  ApplicationLoadBalancer:     # ALB 생성
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: My-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ELBSG
+      Subnets:
+        - !Ref ELBPublicSN1
+        - !Ref ELBPublicSN2
+  
+
+  ALBListener:    # ALB 리스너 생성
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      
+  ALBListenerRule1:     # ALB 리스너 규칙 추가 - /dev
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroupDev
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /dev/*
+      ListenerArn: !Ref ALBListener
+      Priority: 1
+
+  ALBListenerRule2:       # ALB 리스너 규칙 추가 - /mgt
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroupMgt
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /mgt/*
+      ListenerArn: !Ref ALBListener
+      Priority: 2
+      
+        
+          
+  # CloudNetaPrivateEc2:     #Private EC2 인스턴스 생성
+    # Type: AWS::EC2::Instance
+    # Properties:
+      # InstanceType: t3.micro
+      # ImageId: ami-0389ea382ca31bd7f
+      # KeyName: !Ref KeyName
+      # Tags:
+        # - Key: Name
+          # Value: CloudNeta-Private-EC2
+      # NetworkInterfaces:     #ENI를 정의하는 구조
+        # - DeviceIndex: 0
+          # SubnetId: !Ref CloudNetaPrivateSN
+          # GroupSet:
+            # - !Ref CloudNetaSecurityGroup
+      # UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        # Fn::Base64:
+          # !Sub |
+            ##!/bin/bash
+            # (
+            # echo "qwe123"
+            # echo "qwe123"
+            # ) | passwd --stdin root
+            # sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+            # sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+            # service sshd restart    
+               
+    
+Outputs:     #각 EC2 Public&Private IP 추출
+  ELBEC21:
+    Description: ELBEC21
+    Value: !GetAtt ELBEc21.PublicIp
+  ELBEC22:
+    Description: ELBEC22
+    Value: !GetAtt ELBEc22.PublicIp
+  MyEC2:
+    Description: MyEC21
+    Value: !GetAtt MyEc2.PublicIp

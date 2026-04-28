@@ -1,0 +1,438 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Resources:
+  ELBVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: ELB-VPC
+
+  ELBPublicSN1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ELBVPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: ELB-Public-SN-1
+
+  ELBPublicSN2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref ELBVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: ELB-Public-SN-2
+          
+  ELBIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ELB-IGW
+          
+  ELBIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref ELBVPC
+      InternetGatewayId: !Ref ELBIGW
+          
+  ELBPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ELBVPC
+      Tags:
+        - Key: Name
+          Value: ELB-Public-RT
+          
+  ELBRoute:
+    Type: AWS::EC2::Route
+    DependsOn: ELBIGWAttachment
+    Properties:
+      RouteTableId: !Ref ELBPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ELBIGW
+          
+  ELBPublicRTSN1Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ELBPublicSN1
+      RouteTableId: !Ref ELBPublicRT
+      
+  ELBPublicRTSN2Association:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ELBPublicSN2
+      RouteTableId: !Ref ELBPublicRT
+      
+  ELBEC21:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: ELB-EC2-1
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref ELBPublicSN1
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - !Ref ELBSG
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            dnf install httpd -y
+            systemctl enable --now httpd
+            dnf install net-snmp net-snmp-utils -y
+            systemctl enable --now snmpd
+            echo "rocommunity public default" >> /etc/snmp/snmpd.conf
+            echo "<h1>This is ELB-EC2-1 (DEV)</h1>" > /var/www/html/index.html
+            mkdir -p /var/www/html/dev
+            echo "<h1>This is ELB-EC2-1 (DEV)</h1>" > /var/www/html/dev/index.html
+            systemctl restart httpd
+            systemctl restart snmpd
+            
+  ELBEC22:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: ELB-EC2-2
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref ELBPublicSN2
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - !Ref ELBSG
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            dnf install httpd -y
+            systemctl enable --now httpd
+            dnf install net-snmp net-snmp-utils -y
+            systemctl enable --now snmpd
+            echo "rocommunity public default" >> /etc/snmp/snmpd.conf
+            echo "<h1>This is ELB-EC2-2 (mgt)</h1>" > /var/www/html/index.html
+            mkdir -p /var/www/html/mgt
+            echo "<h1>This is ELB-EC2-2 (mgt)</h1>" > /var/www/html/mgt/index.html
+            systemctl restart httpd
+            systemctl restart snmpd
+        
+  ELBSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access Via port 22
+      VpcId: !Ref ELBVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '161'
+          ToPort: '161'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      CidrBlock: 20.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: My-VPC
+          
+  MyPublicSN:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 20.0.0.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: My-Public-SN
+          
+  MyIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: My-IGW
+          
+  MyIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref MyIGW
+      
+  MyPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: My-Public-RT
+          
+  MyRoute:
+    Type: AWS::EC2::Route
+    DependsOn: MyIGWAttachment
+    Properties:
+      RouteTableId: !Ref MyPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyIGW
+          
+  MyPublicRTSNAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MyPublicSN
+      RouteTableId: !Ref MyPublicRT
+      
+  MyEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: My-EC2
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref MyPublicSN
+          AssociatePublicIpAddress: true
+          GroupSet:
+            - !Ref MySG
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            dnf install net-snmp net-snmp-utils -y
+            systemctl enable --now snmpd
+            echo "rocommunity public default" >> /etc/snmp/snmpd.conf
+            systemctl restart snmpd
+          
+  MySG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access Via port 22
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '161'
+          ToPort: '161'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  # NLB 대상 그룹 snmp 
+  NLBTG1:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: NLB-TG1
+      Port: 161
+      Protocol: UDP
+      HealthCheckPort: 80
+      VpcId: !Ref ELBVPC
+      Targets:
+        - Id: !Ref ELBEC21
+          Port: 161
+        - Id: !Ref ELBEC22
+          Port: 161
+          
+  # NLB 대상 그룹 HTTP
+  NLBTG2:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: NLB-TG2
+      Port: 80
+      Protocol: TCP
+      HealthCheckPort: 80
+      VpcId: !Ref ELBVPC
+      Targets:
+        - Id: !Ref ELBEC21
+          Port: 80
+        - Id: !Ref ELBEC22
+          Port: 80
+          
+  # NLB 생성
+  NLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: ELBIGWAttachment
+    Properties:
+      Type: network
+      Name: My-NLB
+      Scheme: internet-facing
+      Subnets:
+        - !Ref ELBPublicSN1
+        - !Ref ELBPublicSN2
+      SecurityGroups:
+        - !Ref ELBSG
+      Tags:
+        - Key: Name
+          Value: Custom-NLB
+
+  # NLB 리스너 snmp
+  NLBListener1:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBTG1
+      LoadBalancerArn: !Ref NLB
+      Port: 161
+      Protocol: UDP
+
+  # NLB 리스너 http
+  NLBListener2:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref NLBTG2
+      LoadBalancerArn: !Ref NLB
+      Port: 80
+      Protocol: TCP
+      
+  # ALB 대상 그룹
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: My-ALB-TG
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref ELBVPC
+      Targets:
+        - Id: !Ref ELBEC21
+          Port: 80
+        - Id: !Ref ELBEC22
+          Port: 80
+          
+  # ALB 대상 그룹 - dev
+  ALBTargetGroupDev:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: My-ALB-TG-Dev
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref ELBVPC
+      Targets:
+        - Id: !Ref ELBEC21
+          Port: 80
+          
+  # ALB 대상 그룹 - mgt
+  ALBTargetGroupMgt:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: My-ALB-TG-Mgt
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref ELBVPC
+      Targets:
+        - Id: !Ref ELBEC22
+          Port: 80
+
+  # ALB 생성
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: My-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ELBSG
+      Subnets:
+        - !Ref ELBPublicSN1
+        - !Ref ELBPublicSN2
+  
+  # ALB 리스너 생성
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      
+  # ALB 리스너 규칙 추가 - /dev
+  ALBListenerRule1:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroupDev
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /dev/*
+      ListenerArn: !Ref ALBListener
+      Priority: 1
+
+  # ALB 리스너 규칙 추가 - /mgt
+  ALBListenerRule2:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroupMgt
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /mgt/*
+      ListenerArn: !Ref ALBListener
+      Priority: 2
+
+# 출력
+Outputs:
+  ELBEC21:
+    Description: Public IP assigned to VPC2 Instance1 eth0 interface
+    Value: !GetAtt ELBEC21.PublicIp
+  ELBEC22:
+    Description: Public IP assigned to VPC2 Instance1 eth0 interface
+    Value: !GetAtt ELBEC22.PublicIp
+  MyEC2:
+    Description: Private IP assigned to VPC2 Instance1 eth0 interface
+    Value: !GetAtt MyEC2.PublicIp

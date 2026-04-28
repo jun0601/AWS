@@ -1,0 +1,192 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
+
+Resources:
+  TESTVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: TEST-VPC
+          
+  TESTIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TEST-IGW
+          
+  TESTIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref TESTIGW
+      VpcId: !Ref TESTVPC
+  
+  TESTPublicSN1:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TESTVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: TEST-Public-SN1
+          
+  TESTPublicSN2:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TESTVPC
+      AvailabilityZone: !Select [ 1, !GetAZs '' ] 
+      CidrBlock: 10.0.2.0/24
+      Tags:
+        - Key: Name
+          Value: TEST-Public-SN2
+          
+  TESTPublicSN3:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TESTVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ] 
+      CidrBlock: 10.0.3.0/24
+      Tags:
+        - Key: Name
+          Value: TEST-Public-SN3
+          
+
+  TESTPublicRT1:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TESTVPC
+      Tags:
+        - Key: Name
+          Value: TEST-Public-RT
+          
+  DefaultPublicRoute1:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TESTIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref TESTPublicRT1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TESTIGW
+      
+  
+  TESTPublicSNRouteTableAssociation1:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TESTPublicRT1
+      SubnetId: !Ref TESTPublicSN1      
+  
+  TESTPublicSNRouteTableAssociation2:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TESTPublicRT1
+      SubnetId: !Ref TESTPublicSN2
+  
+  TESTPublicSNRouteTableAssociation3:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TESTPublicRT1
+      SubnetId: !Ref TESTPublicSN3      
+      
+  TESTSecurityGroup:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref TESTVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '2049'
+          ToPort: '2049'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '2049'
+          ToPort: '2049'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '53'
+          ToPort: '53'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '53'
+          ToPort: '53'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '4500'
+          ToPort: '4500'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '500'
+          ToPort: '500'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          CidrIp: 0.0.0.0/0  # Seoul VPC 대역에서 오는 MySQL 접속 허용
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  TESTPublicEC21:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Test-Public-EC21
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TESTPublicSN1
+          GroupSet:
+            - !Ref TESTSecurityGroup
+          AssociatePublicIpAddress: true     #공인IP할당
+          PrivateIpAddress: 10.0.1.10     # 사설 IP 직접 할당 
+          
+  # TESTPublicEC22:     #Public EC2 인스턴스 생성
+    # Type: AWS::EC2::Instance
+    # Properties:
+      # InstanceType: t3.micro
+      # ImageId: !Ref LatestAmiId
+      # KeyName: !Ref KeyName
+      # Tags:
+        # - Key: Name
+          # Value: Test-Public-EC23
+      # NetworkInterfaces:     #ENI를 정의하는 구조
+        # - DeviceIndex: 0
+          # SubnetId: !Ref TESTPublicSN3
+          # GroupSet:
+            # - !Ref TESTSecurityGroup
+          # AssociatePublicIpAddress: true     #공인IP할당
+          # PrivateIpAddress: 10.0.3.10     # 사설 IP 직접 할당 
+
+    
+Outputs:     #각 EC2 Public&Private IP 추출
+  PublicEC21:
+    Description: PUBLIC IP of 
+    Value: !GetAtt TESTPublicEC21.PublicIp
+  # PublicEC22:
+    # Description: PUBLIC IP of 
+    # Value: !GetAtt TESTPublicEC22.PublicIp
+

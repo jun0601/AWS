@@ -1,0 +1,783 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
+
+Resources:
+############################################################Singapore VPC 환경 세팅###########################################################
+  SingaporeVPC:     #Singapore 가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.3.0.0/16
+      Tags:
+        - Key: Name
+          Value: Singapore-VPC
+          
+  SingaporeVPCIGW:     #Singapore VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Singapore-IGW
+          
+  SingaporeIGWAttachment:     #SingaporeIGW를 SingaporeVPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref SingaporeVPCIGW
+      VpcId: !Ref SingaporeVPC
+  
+  SingaporePublicSN1:     #Public 서브넷1 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.3.1.0/24
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-SN1
+          
+  SingaporePrivateSN1:     #Private 서브넷1 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.3.3.0/24
+      Tags:
+        - Key: Name
+          Value: Singapore-Private-SN1
+
+  SingaporePrivateSN2:     #Private 서브넷2 생성    # 테스트용
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]     #현재 리전의 세 번째 AZ 목록 반환 (가용 영역 C)
+      CidrBlock: 10.3.4.0/24
+      Tags:
+        - Key: Name
+          Value: Singapore-Private-SN2
+          
+  SingaporePrivateSN3:     #Private 서브넷3 생성   -> TGW 연결용임 
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.3.5.0/24
+      Tags:
+        - Key: Name
+          Value: Singapore-Private-SN3
+          
+  SingaporePrivateSN4:     #Private 서브넷4 생성   -> TGW 연결용임 
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]     #현재 리전의 세 번째 AZ 목록 반환 (가용 영역 C)
+      CidrBlock: 10.3.6.0/24
+      Tags:
+        - Key: Name
+          Value: Singapore-Private-SN4
+
+  SingaporePublicRT:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-RT
+          
+  DefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeIGWAttachment     #SingaporeIGWAttachment 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SingaporeVPCIGW
+      
+  SingaporePrivateRT1:     #프라이빗 서브넷용 라우팅 테이블1
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: Singapore-Private-RT1
+          
+  AWStoIDCRoute1:     # AWS VPC에서 IDC 대역으로 가는 트래픽을 TGW로 라우팅
+    Type: AWS::EC2::Route
+    DependsOn: TransitGatewayAtt1
+    Properties:
+      RouteTableId: !Ref SingaporePrivateRT1
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref TransitGateway1     #TGW 
+      
+          
+  SingaporePrivateRT2:     #프라이빗 서브넷용 라우팅 테이블2
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: Singapore-Private-RT2    
+          
+  AWStoIDCRoute4:     # AWS VPC에서 IDC 대역으로 가는 트래픽을 TGW로 라우팅
+    Type: AWS::EC2::Route
+    DependsOn: TransitGatewayAtt1
+    Properties:
+      RouteTableId: !Ref SingaporePrivateRT2
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref TransitGateway1     #TGW 
+          
+  SingaporePrivateRT3:     #연동용 프라이빗 서브넷용 라우팅 테이블3
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      Tags:
+        - Key: Name
+          Value: Singapore-Private-RT3    
+
+
+  
+  SingaporePublicRTAssociation1:     #Public 서브넷1을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SingaporePublicRT
+      SubnetId: !Ref SingaporePublicSN1      
+      
+  SingaporePrivateTAssociation1:     #Private 서브넷1을 Private 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SingaporePrivateRT1
+      SubnetId: !Ref SingaporePrivateSN1
+      
+  SingaporePrivateTAssociation3:     #Private 서브넷3을 연동용 Private 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SingaporePrivateRT3
+      SubnetId: !Ref SingaporePrivateSN3
+      
+  SingaporePrivateTAssociation4:     #Private 서브넷4을 연동용 Private 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SingaporePrivateRT3
+      SubnetId: !Ref SingaporePrivateSN4
+      
+  SingaporeVPCSG:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: SingaporeVPCSG
+      VpcId: !Ref SingaporeVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          CidrIp: 0.0.0.0/0  # Seoul VPC 대역에서 오는 MySQL 접속 허용
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '53'
+          ToPort: '53'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '53'
+          ToPort: '53'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  SingaporePublicEC21:     #Public EC2 인스턴스 생성 1
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Singapore-Public-EC21
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref SingaporePublicSN1
+          GroupSet:
+            - !Ref SingaporeVPCSG
+          AssociatePublicIpAddress: true     #공인IP할당
+          
+          
+  SingaporePrivateEC21:     #Private EC2 인스턴스 생성 1 
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: Singapore-Private-EC21
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref SingaporePrivateSN1
+          GroupSet:
+            - !Ref SingaporeVPCSG
+          PrivateIpAddress: 10.3.3.100     # 사설 IP 직접 할당 
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config     #SSH 비밀번호 로그인 허용
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config     #root 계정 SSH 로그인 허용
+            service sshd restart     #SSH 서비스 재시작
+            hostnamectl --static set-hostname Singapore-AWS-WebSrv1     #서버 hostname을 Seoul-AWS-WebSrv1로 변경
+            cat <<EOT > /etc/profile.d/prompt.sh     #쉘 프롬프트 색상 및 형식 설정
+            export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+            EOT
+            source /etc/profile
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")     #EC2 메타데이터 접근용 토큰 생성 (IMDSv2)
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)     #EC2의 Availability Zone ID 조회
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)     #EC2 Instance ID 조회
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)     #EC2 Private IP 조회
+            dnf install -y httpd php htop tmux     #Apache 웹서버 & PHP 실행 & 시스템 모니터링 & 터미널 세션관리 패키지 설치
+            systemctl start httpd && systemctl enable httpd     #Apache 웹서버 실행 + 부팅 시 자동 실행
+            echo "<h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-JHLEE</h1>" > /var/www/html/index.html     #index.html 웹페이지 생성 
+            
+            cat <<'EOF' > /root/pingchecker.sh    #pingchecker.sh 생성 
+            #!/bin/bash
+            HOST_TO_CHECK=10.2.1.100
+
+            if ping -qc 20 -W 1 $HOST_TO_CHECK >/dev/null; then
+                echo "IDC-DB $HOST_TO_CHECK is up"
+                systemctl start httpd
+            else
+                echo "IDC-DB $HOST_TO_CHECK is down"
+                systemctl stop httpd
+            fi
+            EOF
+            
+            chmod +x /root/pingchecker.sh
+                      
+            dnf install -y httpd     # 1. Apache 설치 및 시작
+            systemctl enable --now httpd
+          
+            dnf install -y https://rpms.remirepo.net/enterprise/remi-release-9.rpm      # # 2. PHP 7.4 설치 (remi 레포지토리 활용)
+            dnf module reset php -y
+            dnf module enable php:remi-7.4 -y
+            dnf install -y php php-cli php-common php-fpm php-mysqlnd php-mbstring
+
+            systemctl restart httpd            # 3. 서비스 재시작
+            systemctl enable --now php-fpm
+            
+            dnf install -y mariadb105-server
+            systemctl enable --now mariadb
+            
+            
+            #echo "* * * * * root /root/pingchecker.sh" >> /etc/crontab     #1분마다 체크하도록 crontab
+            
+############################################################Singapore VPC 환경 세팅###########################################################
+ 
+############################################################Singapore IDC 환경 세팅###########################################################
+  IDCVPC:     #IDC 가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.4.0.0/16
+      Tags:
+        - Key: Name
+          Value: IDC-VPC
+          
+  IDCIGW:     #IDC VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IDC-IGW
+          
+  IDCIGWAttachment:     #IDCIGW를 SingaporeVPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IDCIGW
+      VpcId: !Ref IDCVPC
+  
+  IDCSN1:     #IDC 서브넷1 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IDCVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.4.1.0/24
+      Tags:
+        - Key: Name
+          Value: IDC-Public-SN
+
+  IDCRT:     #IDC 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IDCVPC
+      Tags:
+        - Key: Name
+          Value: IDC-RT
+          
+  IDCRoute:     #IDC RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: IDCIGWAttachment     #IDCIGWAttachment 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref IDCRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IDCIGW 
+              
+  
+  IDCRTAssociation1:     #Public 서브넷1을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref IDCRT
+      SubnetId: !Ref IDCSN1
+      
+  IDCVPCSG:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: IDCVPCSG
+      VpcId: !Ref IDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '53'
+          ToPort: '53'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '53'
+          ToPort: '53'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '4500'
+          ToPort: '4500'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '500'
+          ToPort: '500'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          CidrIp: 0.0.0.0/0  # Singapore VPC 대역에서 오는 MySQL 접속 허용
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  IDCDNSSRV:     #IDCDNSSRV 인스턴스 생성 
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-DNSSRV
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref IDCSN1
+          AssociatePublicIpAddress: true     #공인IP할당
+          GroupSet:
+            - !Ref IDCVPCSG
+          PrivateIpAddress: 10.4.1.200     # 사설 IP 직접 할당 
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            dnf install -y bind bind-utils
+            sed -i 's/listen-on port 53 { 127.0.0.1; };/listen-on port 53 { any; };/' /etc/named.conf
+            sed -i 's/allow-query     { localhost; };/allow-query     { any; };/' /etc/named.conf
+            sed -i 's/dnssec-enable yes/dnssec-enable no/g' /etc/named.conf
+            sed -i 's/dnssec-validation yes/dnssec-validation no/g' /etc/named.conf
+            cat << EOF >> /etc/named.rfc1912.zones
+            zone "idcSingapore.internal" IN {
+                type master;
+                file "idcSingapore.internal.zone";
+                allow-update { none; };
+            };
+            zone "awsSingapore.internal" {
+                type forward;
+                forward only;
+                forwarders { 10.3.3.250; 10.3.4.250; };
+            };
+            EOF
+            cat <<EOF > /var/named/idcSingapore.internal.zone
+            \$TTL 300
+            @       IN      SOA     ns1.idcSingapore.internal. admin.idcSingapore.internal. (
+                                    2026031101 ; Serial
+                                    3600       ; Refresh
+                                    1800       ; Retry
+                                    604800     ; Expire
+                                    300 )      ; Minimum TTL
+                    IN      NS      ns1.idcSingapore.internal.
+            ns1     IN      A       10.4.1.200
+            dbsrv  IN      A       10.4.1.100
+            dnssrv  IN      A       10.4.1.200
+            EOF
+            systemctl enable --now named
+            
+  IDCCGWENI:     # CGW용 ENI 생성 
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref IDCSN1
+      PrivateIpAddress: 10.4.1.250
+      GroupSet:
+        - !Ref IDCVPCSG
+          
+  CGWEIP:    #탄력적 IP 할당
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  CGWEIPAssociation:     # 할당된 IP 연결
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt CGWEIP.AllocationId
+      NetworkInterfaceId: !Ref IDCCGWENI
+      
+  IDCDBSRV:     #IDCDBSRV 인스턴스 생성 
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-DBSRV
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref IDCSN1
+          AssociatePublicIpAddress: true     #공인IP할당
+          GroupSet:
+            - !Ref IDCVPCSG
+          PrivateIpAddress: 10.4.1.100     # 사설 IP 직접 할당 
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+  
+            # MariaDB 설치
+            dnf install -y mariadb105-server
+  
+            # 서비스 시작
+            systemctl enable --now mariadb  
+  
+            # 방화벽 (필요 시)
+            # firewall-cmd --permanent --add-service=mysql
+            # firewall-cmd --reload
+
+            # 문자셋 및 외부 접속 설정
+            cat <<EOF > /etc/my.cnf.d/mariadb-server.cnf
+            [mysqld]
+            bind-address=0.0.0.0
+            collation-server=utf8mb4_general_ci
+            character-set-server=utf8mb4
+            server-id=2
+            read_only = 1
+
+            [client]
+            default-character-set=utf8mb4
+
+            [mysql]
+            default-character-set=utf8mb4
+            EOF
+
+            systemctl restart mariadb
+
+            # DB 생성
+            mysql -u root -e "CREATE DATABASE IF NOT EXISTS sqlDB CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+
+            # 사용자 생성
+            mysql -u root -e "CREATE USER IF NOT EXISTS 'user1'@'%' IDENTIFIED BY 'p@ssw0rd';"
+            mysql -u root -e "GRANT ALL PRIVILEGES ON sqlDB.* TO 'user1'@'%';"
+            mysql -u root -e "FLUSH PRIVILEGES;"
+
+
+  IDCCGWEC2:     #CGW 인스턴스 생성 
+    Type: AWS::EC2::Instance
+    Properties:
+      SourceDestCheck: false
+      InstanceType: t3.small
+      ImageId: ami-0058131e22d7c740c     #로키 9 이미지  <- 싱가폴 할때는 확인해봐야 될듯 
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-CGW-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref IDCCGWENI  
+
+############################################################Singapore IDC 환경 세팅##########################################################
+ 
+ ########################################NAT 구성           
+  NATGateWay1:     #Private Subnet의 인스턴스가 인터넷으로 나갈 수 있도록 NAT 게이트웨이 설치 
+    Type: AWS::EC2::NatGateway
+    DependsOn: EIP1
+    Properties:
+      AllocationId: !GetAtt EIP1.AllocationId     #EIP에 할당된 IP를 할당해줌(publicip가 아닌 할당된 ip)
+      SubnetId: !Ref SingaporePublicSN1
+      Tags:
+        - Key: Name
+          Value: NAT-Gateway1
+          
+  EIP1:     #탄력적 IP 할당 NAT1 용
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      
+  NATRoute1:     #Private에 연결된 라우팅 테이블에 route 설정 1
+    Type: AWS::EC2::Route
+    DependsOn: SingaporeIGWAttachment
+    Properties:
+      RouteTableId: !Ref SingaporePrivateRT1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateWay1
+      
+######################################## ALB 구성 
+  ALB:     #ALB 생성 
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: AWS-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref SingaporeVPCSG
+      Subnets:
+        - !Ref SingaporePublicSN1  
+        - !Ref SingaporePrivateSN2        
+
+  ALBTG:     # ALB 대상 그룹
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: ALB-TG
+      Port: 80
+      Protocol: HTTP
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5        # 헬스체크 요청 후 응답을 기다리는 최대 시간 (기본값 5초)
+      HealthyThresholdCount: 2            # 정상 상태로 판단하기 위해 연속 성공해야 하는 헬스체크 횟수 (기본값 2회)
+      UnhealthyThresholdCount: 2          # 비정상 상태로 판단하기 위해 연속 실패해야 하는 헬스체크 횟수 (기본값 2회)
+      VpcId: !Ref SingaporeVPC
+      Targets:
+        - Id: !Ref SingaporePrivateEC21
+          Port: 80
+       
+  ALBListener:     # ALB 리스너 생성
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      
+      
+######################################## DNS 설정 
+  DNS1:     #호스트존 생성
+    Type: AWS::Route53::HostedZone
+    DependsOn: SingaporeVPC
+    Properties:
+      HostedZoneConfig:
+        Comment: hosted zone for Singapore.internal
+      Name: awsSingapore.internal
+      VPCs:
+        - VPCId: !Ref SingaporeVPC
+          VPCRegion: ap-southeast-1
+      HostedZoneTags:
+        - Key: Name
+          Value: awsnetadomain
+          
+  DNSRecordInstance1:     #EC21 설정 
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref DNS1
+      Comment: DNS name for Singapore WEBSERV1 instance
+      Name: websrv1.awsSingapore.internal
+      Type: A
+      TTL: 60
+      ResourceRecords:
+        - !GetAtt SingaporePrivateEC21.PrivateIp
+        
+
+  InboundEP:     #인바운드 설정 
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: INBOUND
+      IpAddresses:
+        - Ip: 10.3.3.250
+          SubnetId: !Ref SingaporePrivateSN1
+        - Ip: 10.3.4.250
+          SubnetId: !Ref SingaporePrivateSN2
+      SecurityGroupIds:
+        - !Ref SingaporeVPCSG
+      Tags:
+        - Key: Name
+          Value: idc-to-aws-inbound
+          
+  OutboundEP:    #아웃바운드 설정 
+    Type: AWS::Route53Resolver::ResolverEndpoint
+    Properties:
+      Direction: OUTBOUND
+      IpAddresses:
+        - Ip: 10.3.3.251
+          SubnetId: !Ref SingaporePrivateSN1
+        - Ip: 10.3.4.251
+          SubnetId: !Ref SingaporePrivateSN2
+      SecurityGroupIds:
+        - !Ref SingaporeVPCSG
+      Tags:
+        - Key: Name
+          Value: aws-to-idc-inbound
+          
+  ForwardRule:    # 포워드 규칙 설정 
+    Type: AWS::Route53Resolver::ResolverRule
+    Properties:
+      DomainName: idcSingapore.internal
+      Name: AWS-To-IDC-ForwardRule
+      ResolverEndpointId: !Ref OutboundEP
+      RuleType: FORWARD
+      TargetIps:
+        - Ip: 10.4.1.200
+          Port: 53
+      
+  ResolverRuleAssociation:    #규칙관계
+    Type: AWS::Route53Resolver::ResolverRuleAssociation
+    Properties:
+      Name: Resolver-Rule-Association
+      ResolverRuleId: !Ref ForwardRule
+      VPCId: !Ref SingaporeVPC
+
+######################################## TGW <-> VPC 
+  TransitGateway1:     #AWS Transit Gateway 생성
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      # DefaultRouteTableAssociation: disable     #기본 라우팅 테이블 생성하는거 비활성화 하는 코드
+      # DefaultRouteTablePropagation: disable     #기본 전파하는 부분 비활성화 하는 코드
+      Tags:
+        - Key: Name
+          Value: TGW1
+
+  TransitGatewayAtt1:     #TGW 연결 생성 1 VPC랑 연결
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: SingaporeVPC
+    Properties:
+      VpcId: !Ref SingaporeVPC
+      SubnetIds:
+        - !Ref SingaporePrivateSN3
+        - !Ref SingaporePrivateSN4
+      TransitGatewayId: !Ref TransitGateway1
+      Tags:
+        - Key: Name
+          Value: TGW-ATT1-VPC0
+          
+  # TransitGatewayRT1:     #TGW 라우팅테이블 생성 
+    # Type: AWS::EC2::TransitGatewayRouteTable
+    # Properties:
+      # TransitGatewayId: !Ref TransitGateway1
+      # Tags:
+        # - Key: Name
+          # Value: TGW1-RT1
+          
+  # TransitATTRT1:     #TGW와 TGW RT 연결 
+    # Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    # Properties:
+      # TransitGatewayAttachmentId: !Ref TransitGatewayAtt1
+      # TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+      
+  # TransitRTPropagation1:     # TGW 라우팅테이블1에 연결1 라우팅경로 전파
+    # Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    # Properties:
+      # TransitGatewayAttachmentId: !Ref TransitGatewayAtt1
+      # TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+      
+  IDCRoute1:     # 라우팅테이블 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: IDCCGWEC2
+    Properties:
+      RouteTableId: !Ref IDCRT
+      DestinationCidrBlock: 10.0.0.0/8
+      NetworkInterfaceId: !Ref IDCCGWENI    
+      
+##############################TGW <-> VPN
+  IDCCGW:     # 온프레미스(IDC) VPN 장비를 Customer Gateway로 등록
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65010
+      IpAddress: !GetAtt CGWEIP.PublicIp    
+      Tags:
+        - Key: Name
+          Value: IDC-VPN-CGW
+          
+  VPCAWSVpnConnection:     #TGW와 온프레미스 간 IPsec VPN 터널 생성
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      Type: ipsec.1
+      CustomerGatewayId: !Ref IDCCGW
+      TransitGatewayId: !Ref TransitGateway1     #TransitGateway로 설정
+      VpnTunnelOptionsSpecifications:
+        - PreSharedKey: cloudneta
+          TunnelInsideCidr: 169.254.178.132/30
+        - PreSharedKey: cloudneta
+          TunnelInsideCidr: 169.254.154.168/30
+      Tags:
+        - Key: Name
+          Value: AWS-VPNConnection-IDC
+          
+##############################
+  TGWStacticRoute1:     # 나중에 업데이트 -> 피어링 route 추가 
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.1.0.0/16
+      TransitGatewayRouteTableId: tgw-rtb-0eef970c91bdc2a69
+      TransitGatewayAttachmentId: tgw-attach-01b8e26312cb66a7f
+      
+  TGWStacticRoute2:     # 나중에 업데이트 -> 피어링 route 추가 
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      DestinationCidrBlock: 10.2.0.0/16
+      TransitGatewayRouteTableId: tgw-rtb-0eef970c91bdc2a69
+      TransitGatewayAttachmentId: tgw-attach-01b8e26312cb66a7f
+          
+          
+
+      
+            
+    
+Outputs:     #각 EC2 Public&Private IP 추출
+  SingaporePublicEC21:
+    Description: PUBLIC IP of SingaporePublicEC21
+    Value: !GetAtt SingaporePublicEC21.PublicIp
+  IDCDNSSRV:
+    Description: PUBLIC IP of IDCDNSSRV
+    Value: !GetAtt IDCDNSSRV.PublicIp
+  IDCDBSRV:
+    Description: PUBLIC IP of IDCDBSRV
+    Value: !GetAtt IDCDBSRV.PublicIp
+  IDCCGWEC2:
+    Description: PUBLIC IP of IDCCGWEC2
+    Value: !GetAtt IDCCGWEC2.PublicIp
+  SingaporeTransitGatewayID:     # 싱가폴 transitgateway ID 추출 
+    Description: Singapore TransitGateway ID
+    Value: !Ref TransitGateway1

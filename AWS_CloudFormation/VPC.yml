@@ -1,0 +1,154 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+Resources:
+  CloudNetaVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: CloudNeta-VPC
+          
+  CloudNetaIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: CloudNeta-IGW
+          
+  CloudNetaIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref CloudNetaIGW
+      VpcId: !Ref CloudNetaVPC
+  
+  CloudNetaPublicSN:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CloudNetaVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: CloudNeta-Public-SN
+
+  CloudNetaPrivateSN:     #Private 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref CloudNetaVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]     #현재 리전의 세 번째 AZ 목록 반환 (가용 영역 C)
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: CloudNeta-Private-SN
+
+  CloudNetaPublicRT:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CloudNetaVPC
+      Tags:
+        - Key: Name
+          Value: CloudNeta-Public-RT
+          
+  DefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: CloudNetaIGWAttachment     #CloudNetaIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref CloudNetaPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref CloudNetaIGW
+      
+  CloudNetaPrivateRT:     #프라이빗 서브넷용 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref CloudNetaVPC
+      Tags:
+        - Key: Name
+          Value: CloudNeta-Private-RT
+  
+  CloudNetaPublicSNRouteTableAssociation:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref CloudNetaPublicRT
+      SubnetId: !Ref CloudNetaPublicSN
+      
+  CloudNetaPrivateSNRouteTableAssociation:     #Private 서브넷을 Private 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref CloudNetaPrivateRT
+      SubnetId: !Ref CloudNetaPrivateSN
+      
+  CloudNetaSecurityGroup:     #EC2 인스턴스에 적용되는 가상 방화벽
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref CloudNetaVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  CloudNetaPublicEc2:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: CloudNeta-Public-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref CloudNetaPublicSN
+          GroupSet:
+            - !Ref CloudNetaSecurityGroup
+          AssociatePublicIpAddress: true     #공인IP할당
+          
+  CloudNetaPrivateEc2:     #Private EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: ami-0389ea382ca31bd7f
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: CloudNeta-Private-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref CloudNetaPrivateSN
+          GroupSet:
+            - !Ref CloudNetaSecurityGroup
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+            service sshd restart    
+    
+Outputs:     #각 EC2 Public&Private IP 추출
+  PublicEC2:
+    Description: Public IP assigned to VPC2 Instance1 eth0 interface
+    Value: !GetAtt CloudNetaPublicEc2.PublicIp
+  PrivateEC2:
+    Description: Private IP assigned to VPC2 Instance2 eth0 interface
+    Value: !GetAtt CloudNetaPrivateEc2.PrivateIp

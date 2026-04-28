@@ -1,0 +1,149 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
+
+Resources:
+  TESTVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: TEST-VPC
+          
+  TESTIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TEST-IGW
+          
+  TESTIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref TESTIGW
+      VpcId: !Ref TESTVPC
+  
+  TESTPublicSN:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TESTVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: TEST-Public-SN
+
+  TESTPublicRT:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TESTVPC
+      Tags:
+        - Key: Name
+          Value: TEST-Public-RT
+          
+  DefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TESTIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref TESTPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TESTIGW
+      
+  
+  TESTPublicSNRouteTableAssociation:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref TESTPublicRT
+      SubnetId: !Ref TESTPublicSN
+      
+      
+  TESTSecurityGroup:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref TESTVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  MyCGWInstanceProfile:     #IAM에서 만든 Role을 가리키는 프로파일 
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - "EC2-S3-Read-Role"
+
+  TESTPublicEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-06b18c6a9a323f75f
+      InstanceType: t3.small
+      KeyName: !Ref KeyName
+      # 중요: 새로 만든 IAM 역할을 인스턴스에 연결합니다.
+      IamInstanceProfile: !Ref MyCGWInstanceProfile 
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref TESTPublicSN
+          GroupSet:
+            - !Ref TESTSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # 1. 로그 기록 시작
+          exec > >(tee -a /var/log/userdata-test.log) 2>&1
+          echo "=== Rocky Linux S3 & EC2 Auth Test Start: $(date) ==="
+
+          # 2. AWS CLI 설치 (Rocky는 기본으로 없을 확률이 높음)
+          echo "Step 0: Installing AWS CLI..."
+          dnf install -y unzip
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install
+          /usr/local/bin/aws --version
+
+          # 3. S3 파일 복사 테스트
+          echo "Step 1: Testing S3 Copy from zxxnwood..."
+          /usr/local/bin/aws s3 cp s3://zxxnwood-330372998608-ap-northeast-2-an/vpn-setup.sh /tmp/vpn-setup.sh
+          
+          if [ -f /tmp/vpn-setup.sh ]; then
+              echo "[SUCCESS] S3 file downloaded successfully."
+              ls -l /tmp/vpn-setup.sh
+          else
+              echo "[FAILED] S3 Copy Failed!"
+          fi
+
+          # 4. EC2 Describe 권한 테스트 (IMDSv2 사용)
+          echo "Step 2: Testing EC2 Describe Instances..."
+          TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+          INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" -s http://169.254.169.254/latest/meta-data/instance-id)
+          
+          /usr/local/bin/aws ec2 describe-instances --instance-ids $INSTANCE_ID --region ${AWS::Region} > /tmp/instance-info.json
+
+          if [ $? -eq 0 ]; then
+              echo "[SUCCESS] EC2 Describe command executed successfully."
+          else
+              echo "[FAILED] EC2 Describe Failed!"
+          fi
+
+          echo "=== Test Completed: $(date) ==="

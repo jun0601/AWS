@@ -1,0 +1,768 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
+
+Resources:
+  TGWVPC0:     #가상 네트워크 공간 생성 VPC0
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: TGW-VPC0
+          
+  TGWVPC1:     #가상 네트워크 공간 생성 VPC1
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.10.0.0/16
+      Tags:
+        - Key: Name
+          Value: TGW-VPC1
+          
+  TGWVPC2:     #가상 네트워크 공간 생성 VPC2
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.20.0.0/16
+      Tags:
+        - Key: Name
+          Value: TGW-VPC2
+          
+  TGWVPC0IGW:     #VPC0를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TGW-VPC0-IGW
+          
+  TGWIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref TGWVPC0IGW
+      VpcId: !Ref TGWVPC0
+
+#######################VPC0############################
+  
+  TGWVPC0SN1:     #VPC0 Public 서브넷 생성 1 
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC0
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC0-SN1
+          
+  TGWVPC0SN2:     #VPC0 Public 서브넷 생성 2
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC0
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.0.2.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC0-SN2
+
+  TGWVPC0SN3:     #연동용 VPC0 서브넷3
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC0
+      AvailabilityZone: !Select [ 0, !GetAZs '' ] 
+      CidrBlock: 10.0.3.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC0-SN3
+          
+  TGWVPC0SN4:     #연동용 VPC0 서브넷4
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC0
+      AvailabilityZone: !Select [ 2, !GetAZs '' ] 
+      CidrBlock: 10.0.4.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC0-SN4
+
+  VPC0RT1:     #VPC0RT1
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TGWVPC0
+      Tags:
+        - Key: Name
+          Value: VPC0-RT1
+          
+  VPC0Route:     #VPC0RT1에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TGWIGWAttachment     #TGWIGWAttachment 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref VPC0RT1
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TGWVPC0IGW
+      
+  VPC0RT2:     #연동용 서브넷 RT
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TGWVPC0
+      Tags:
+        - Key: Name
+          Value: VPC0-RT2
+  
+  VPC0RouteTableAssociation1:     #TGWVPC0SN1 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC0RT1
+      SubnetId: !Ref TGWVPC0SN1
+      
+  VPC0RouteTableAssociation2:     #TGWVPC0SN2 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC0RT1
+      SubnetId: !Ref TGWVPC0SN2
+      
+  VPC0RouteTableAssociation3:     #TGWVPC0SN3 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC0RT2
+      SubnetId: !Ref TGWVPC0SN3
+      
+  VPC0RouteTableAssociation4:     #TGWVPC0SN4 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC0RT2
+      SubnetId: !Ref TGWVPC0SN4
+      
+      
+  VPC0SG1:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref TGWVPC0
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '3128'
+          ToPort: '3128'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  VPC0Instance1:     #VPC0 EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: VPC0Instance1
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TGWVPC0SN1
+          GroupSet:
+            - !Ref VPC0SG1
+          AssociatePublicIpAddress: true     #공인IP할당
+          PrivateIpAddress: 10.0.1.10     # 사설 IP 직접 할당 
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          hostnamectl --static set-hostname VPC0Instance1
+          cat <<EOT >> /etc/profile.d/prompt.sh
+          export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+          EOT
+          source /etc/profile
+          dnf install -y tcpdump squid
+          cat <<EOT> /etc/squid/squid.conf
+          http_port 3128
+          acl all src 0.0.0.0/0
+          http_access allow all
+          http_access deny all
+          EOT
+          systemctl start squid && systemctl enable squid
+          cat <<EOT> /home/ec2-user/list.txt
+          10.0.1.10
+          10.10.1.10
+          10.10.2.10
+          10.20.1.10
+          10.20.2.10
+          EOT
+          dnf install httpd -y
+          systemctl start httpd && systemctl enable httpd
+          echo "<h1>TGW Lab - MgMt Server1</h1>" > /var/www/html/index.html
+          curl -o /home/ec2-user/pingall.sh https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter6/pingall.sh --silent
+          cp /home/ec2-user/pingall.sh /var/www/html/pingall.sh
+          cp /home/ec2-user/list.txt /var/www/html/list.txt
+          chmod +x /home/ec2-user/pingall.sh
+          
+  VPC0CloudFormationEndpoint:     # VPC0 subnet1,2에 CloudFormation에 대한 VPC 엔드포인트 생성
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref TGWVPC0
+      VpcEndpointType: Interface
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.cloudformation
+      SubnetIds:
+        - !Ref TGWVPC0SN1
+        - !Ref TGWVPC0SN2
+      SecurityGroupIds:
+        - !Ref VPC0SG1
+      PrivateDnsEnabled: true
+      Tags:
+        - Key: Name
+          Value: VPC0-CloudFormation-Endpoint
+          
+#################################VPC0############################################
+
+#######################VPC1############################
+  
+  TGWVPC1SN1:     #VPC1 Public 서브넷 생성 1 
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC1
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.10.1.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC1-SN1
+          
+  TGWVPC1SN2:     #VPC1 Public 서브넷 생성 2
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC1
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.10.2.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC1-SN2
+
+  TGWVPC1SN3:     #연동용 VPC1 서브넷3
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC1
+      AvailabilityZone: !Select [ 0, !GetAZs '' ] 
+      CidrBlock: 10.10.3.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC1-SN3
+          
+  TGWVPC1SN4:     #연동용 VPC1 서브넷4
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC1
+      AvailabilityZone: !Select [ 2, !GetAZs '' ] 
+      CidrBlock: 10.10.4.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC1-SN4
+
+  VPC1RT1:     #VPC0RT1
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TGWVPC1
+      Tags:
+        - Key: Name
+          Value: VPC1-RT1      
+          
+  # VPC0Route:     #VPC0RT1에 기본 인터넷 경로 추가
+    # Type: AWS::EC2::Route
+    # DependsOn: TGWIGWAttachment     #TGWIGWAttachment 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    # Properties:
+      # RouteTableId: !Ref VPC0RT1
+      # DestinationCidrBlock: 0.0.0.0/0
+      # GatewayId: !Ref TGWVPC0IGW
+      
+  VPC1RT2:     #연동용 서브넷 RT
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TGWVPC1
+      Tags:
+        - Key: Name
+          Value: VPC1-RT2
+  
+  VPC1RouteTableAssociation1:     #TGWVPC1SN1 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC1RT1
+      SubnetId: !Ref TGWVPC1SN1
+      
+  VPC1RouteTableAssociation2:     #TGWVPC1SN2 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC1RT1
+      SubnetId: !Ref TGWVPC1SN2
+      
+  VPC1RouteTableAssociation3:     #TGWVPC1SN3 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC1RT2
+      SubnetId: !Ref TGWVPC1SN3
+      
+  VPC1RouteTableAssociation4:     #TGWVPC0SN4 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC1RT2
+      SubnetId: !Ref TGWVPC1SN4
+      
+      
+  VPC1SG1:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref TGWVPC1
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+
+  VPC1Instance1:     #VPC1 EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: VPC1Instance1
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TGWVPC1SN1
+          GroupSet:
+            - !Ref VPC1SG1
+          PrivateIpAddress: 10.10.1.10     # 사설 IP 직접 할당 
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config     #SSH 비밀번호 로그인 허용
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config     #root 계정 SSH 로그인 허용
+            service sshd restart     #SSH 서비스 재시작
+          
+  VPC1Instance2:     #VPC1 EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: VPC1Instance2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TGWVPC1SN2
+          GroupSet:
+            - !Ref VPC1SG1
+          PrivateIpAddress: 10.10.2.10     # 사설 IP 직접 할당 
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config     #SSH 비밀번호 로그인 허용
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config     #root 계정 SSH 로그인 허용
+            service sshd restart     #SSH 서비스 재시작
+          
+#################################VPC1############################################
+
+#######################VPC2############################
+  
+  TGWVPC2SN1:     #VPC2 Public 서브넷 생성 1 
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC2
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.20.1.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC2-SN1
+          
+  TGWVPC2SN2:     #VPC2 Public 서브넷 생성 2
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC2
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]
+      CidrBlock: 10.20.2.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC2-SN2
+
+  TGWVPC2SN3:     #연동용 VPC2 서브넷3
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC2
+      AvailabilityZone: !Select [ 0, !GetAZs '' ] 
+      CidrBlock: 10.20.3.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC2-SN3
+          
+  TGWVPC2SN4:     #연동용 VPC2 서브넷4
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TGWVPC2
+      AvailabilityZone: !Select [ 2, !GetAZs '' ] 
+      CidrBlock: 10.20.4.0/24
+      Tags:
+        - Key: Name
+          Value: TGW-VPC2-SN4
+
+  VPC2RT1:     #VPC2RT1
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TGWVPC2
+      Tags:
+        - Key: Name
+          Value: VPC2-RT1      
+          
+  # VPC0Route:     #VPC0RT1에 기본 인터넷 경로 추가
+    # Type: AWS::EC2::Route
+    # DependsOn: TGWIGWAttachment     #TGWIGWAttachment 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    # Properties:
+      # RouteTableId: !Ref VPC0RT1
+      # DestinationCidrBlock: 0.0.0.0/0
+      # GatewayId: !Ref TGWVPC0IGW
+      
+  VPC2RT2:     #연동용 서브넷 RT
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TGWVPC2
+      Tags:
+        - Key: Name
+          Value: VPC2-RT2
+  
+  VPC2RouteTableAssociation1:     #TGWVPC2SN1 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC2RT1
+      SubnetId: !Ref TGWVPC2SN1
+      
+  VPC2RouteTableAssociation2:     #TGWVPC2SN2 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC2RT1
+      SubnetId: !Ref TGWVPC2SN2
+      
+  VPC2RouteTableAssociation3:     #TGWVPC2SN3 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC2RT2
+      SubnetId: !Ref TGWVPC2SN3
+      
+  VPC2RouteTableAssociation4:     #TGWVPC2SN4 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref VPC2RT2
+      SubnetId: !Ref TGWVPC2SN4
+      
+      
+  VPC2SG1:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref TGWVPC2
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+
+  VPC2Instance1:     #VPC2 EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: VPC2Instance1
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TGWVPC2SN1
+          GroupSet:
+            - !Ref VPC2SG1
+          PrivateIpAddress: 10.20.1.10     # 사설 IP 직접 할당 
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config     #SSH 비밀번호 로그인 허용
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config     #root 계정 SSH 로그인 허용
+            service sshd restart     #SSH 서비스 재시작
+          
+  VPC2Instance2:     #VPC2 EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: VPC2Instance2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref TGWVPC2SN2
+          GroupSet:
+            - !Ref VPC2SG1
+          PrivateIpAddress: 10.20.2.10     # 사설 IP 직접 할당
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config     #SSH 비밀번호 로그인 허용
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config     #root 계정 SSH 로그인 허용
+            service sshd restart     #SSH 서비스 재시작
+          
+#################################VPC2############################################
+          
+  #TGW Resource 추가
+  TransitGateway1:     #AWS Transit Gateway 생성
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      DefaultRouteTableAssociation: disable
+      DefaultRouteTablePropagation: disable
+      Tags:
+        - Key: Name
+          Value: TGW1
+  
+  TransitGatewayAtt1:     #TGW 연결 생성 1
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: TGWVPC0
+    Properties:
+      VpcId: !Ref TGWVPC0
+      SubnetIds:
+        - !Ref TGWVPC0SN3
+        - !Ref TGWVPC0SN4
+      TransitGatewayId: !Ref TransitGateway1
+      Tags:
+        - Key: Name
+          Value: TGW-ATT1-VPC0
+          
+  TransitGatewayAtt2:     #TGW 연결 생성 2
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: TGWVPC1
+    Properties:
+      VpcId: !Ref TGWVPC1
+      SubnetIds:
+        - !Ref TGWVPC1SN3
+        - !Ref TGWVPC1SN4
+      TransitGatewayId: !Ref TransitGateway1
+      Tags:
+        - Key: Name
+          Value: TGW-ATT2-VPC1
+          
+    
+  TransitGatewayAtt3:     #TGW 연결 생성 3
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: TGWVPC2
+    Properties:
+      VpcId: !Ref TGWVPC2
+      SubnetIds:
+        - !Ref TGWVPC2SN3
+        - !Ref TGWVPC2SN4
+      TransitGatewayId: !Ref TransitGateway1
+      Tags:
+        - Key: Name
+          Value: TGW-ATT3-VPC2
+          
+  TransitGatewayRT1:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      TransitGatewayId: !Ref TransitGateway1
+      Tags:
+        - Key: Name
+          Value: TGW1-RT1
+          
+  TransitATTRT1:     #라우팅 테이블에 연결 1 
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt1
+      TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+      
+  # TransitATTRT2:     #라우팅 테이블에 연결 2 
+    # Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    # Properties:
+      # TransitGatewayAttachmentId: !Ref TransitGatewayAtt2
+      # TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+      
+  # TransitATTRT3:     #라우팅 테이블에 연결 3 
+    # Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    # Properties:
+      # TransitGatewayAttachmentId: !Ref TransitGatewayAtt3
+      # TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+          
+  TransitRTPropagation1:     # TGW 라우팅테이블1에 연결1 라우팅경로 전파
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt1
+      TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+      
+  TransitRTPropagation2:     # TGW 라우팅테이블1에 연결2 라우팅경로 전파
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt2
+      TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+
+  TransitRTPropagation3:     # TGW 라우팅테이블1에 연결3 라우팅경로 전파
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt3
+      TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+
+  VPC0Route2:     # 라우팅테이블 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TransitGatewayAtt1
+    Properties:
+      RouteTableId: !Ref VPC0RT1
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref TransitGateway1
+      
+  VPC1Route2:     # 라우팅테이블 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TransitGatewayAtt2
+    Properties:
+      RouteTableId: !Ref VPC1RT1
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref TransitGateway1
+      
+  VPC2Route2:     # 라우팅테이블 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: TransitGatewayAtt3
+    Properties:
+      RouteTableId: !Ref VPC2RT1
+      DestinationCidrBlock: 10.0.0.0/8
+      TransitGatewayId: !Ref TransitGateway1
+      
+
+  BlueRT:     # Blue-RT, Red-RT 생성
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TGW-Blue-RT
+      TransitGatewayId: !Ref TransitGateway1
+      
+  RedRT:
+    Type: AWS::EC2::TransitGatewayRouteTable
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TGW-Red-RT
+      TransitGatewayId: !Ref TransitGateway1
+
+
+  BlueAtt2Association:     # Blue - Att2, Red - Att3 연결
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt2
+      TransitGatewayRouteTableId: !Ref BlueRT
+  RedAtt3Association:
+    Type: AWS::EC2::TransitGatewayRouteTableAssociation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt3
+      TransitGatewayRouteTableId: !Ref RedRT
+  
+
+  BlueRTPropagation1:     # Blue 라우팅 테이블에 Att1, Att2 전파 추가
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt2
+      TransitGatewayRouteTableId: !Ref BlueRT
+  BlueRTPropagation2:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt1
+      TransitGatewayRouteTableId: !Ref BlueRT
+
+
+  RedRTPropagation1:       # Red 라우팅 테이블에 Att1, Att3 전파 추가
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt3
+      TransitGatewayRouteTableId: !Ref RedRT
+  RedRTPropagation2:
+    Type: AWS::EC2::TransitGatewayRouteTablePropagation
+    Properties:
+      TransitGatewayAttachmentId: !Ref TransitGatewayAtt1
+      TransitGatewayRouteTableId: !Ref RedRT
+      
+  BlackholeRt:    # 블랙홀 설정 
+    Type: AWS::EC2::TransitGatewayRoute
+    Properties:
+      Blackhole: true
+      DestinationCidrBlock: 10.20.2.0/24
+      TransitGatewayRouteTableId: !Ref TransitGatewayRT1
+      
+   
+Outputs:     #각 EC2 Public&Private IP 추출
+  VPC0Instance1:
+    Description: PUBLIC IP of VPC0Instance1
+    Value: !GetAtt VPC0Instance1.PublicIp
+  VPC1Instance1:
+    Description: PrivateIp IP of VPC1Instance1
+    Value: !GetAtt VPC1Instance1.PrivateIp
+  VPC1Instance2:
+    Description: PrivateIp IP of VPC1Instance2
+    Value: !GetAtt VPC1Instance2.PrivateIp
+  VPC2Instance1:
+    Description: PrivateIp IP of VPC2Instance1
+    Value: !GetAtt VPC2Instance1.PrivateIp
+  VPC2Instance2:
+    Description: PrivateIp IP of VPC2Instance2
+    Value: !GetAtt VPC2Instance2.PrivateIp

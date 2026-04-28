@@ -1,0 +1,93 @@
+Parameters:
+  AlbSydneyArn:     #시드니 ALB
+    Type: String
+    Description: ARN of ALB in ap-southeast-2
+    
+  Ec2SaoPauloA:     #상파울로 인스턴스 2개 
+    Type: String
+    Description: EC2 instance ID 1
+  Ec2SaoPauloB:
+    Type: String
+    Description: EC2 instance ID 2
+    
+  DialSydney:
+    Type: Number
+    Default: 100
+    MinValue: 0
+    MaxValue: 100
+    Description: traffic dial for ap-southeast-2
+    
+  DialSaoPaulo:
+    Type: Number
+    Default: 100
+    MinValue: 0
+    MaxValue: 100
+    Description: traffic dial for sa-east-1
+    
+  WsydneyAlb:
+    Type: Number
+    Default: 255
+    MinValue: 0
+    MaxValue: 255
+    Description: Weight for ALB sydney
+    
+  WSaoPauloEc2A:
+    Type: Number
+    Default: 128
+    MinValue: 0
+    MaxValue: 255
+    Description: Weight for ALB SaoPaulo1
+    
+  WSaoPauloEc2B:
+    Type: Number
+    Default: 128
+    MinValue: 0
+    MaxValue: 255
+    Description: Weight for ALB SaoPaulo2
+    
+Resources:
+  Accelerator:
+    Type: AWS::GlobalAccelerator::Accelerator
+    Properties:
+      Name: !Sub '${AWS::StackName}-ga'
+      Enabled: true
+      IpAddressType: IPV4
+      
+  Listener:     #AWS Global Accelerator Listener 설정
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref Accelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 80
+          ToPort: 80
+      ClientAffinity: SOURCE_IP     #같은 Client IP → 같은 Endpoint -> 즉 세션 유지 
+        
+  EndpointGroupSydney:     #시드니 리전 엔드포인트 그룹
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref Listener
+      EndpointGroupRegion: ap-southeast-2
+      TrafficDialPercentage: !Ref DialSydney
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 80
+      EndpointConfigurations:
+        - EndpointId: !Ref AlbSydneyArn
+          Weight: !Ref WsydneyAlb
+          
+  EndpointGroupSaoPaulo:     #상파울로 리전 엔드포인트 그룹
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref Listener
+      EndpointGroupRegion: sa-east-1
+      TrafficDialPercentage: !Ref DialSaoPaulo
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 80
+      EndpointConfigurations:
+        - EndpointId: !Ref Ec2SaoPauloA
+          Weight: !Ref WSaoPauloEc2A
+          ClientIPPreservationEnabled: true
+        - EndpointId: !Ref Ec2SaoPauloB
+          Weight: !Ref WSaoPauloEc2B
+          ClientIPPreservationEnabled: true
+  

@@ -1,0 +1,524 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Resources:
+  testVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.1.0.0/16
+      Tags:
+        - Key: Name
+          Value: test-VPC
+          
+  testIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: test-IGW
+          
+  testIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref testIGW
+      VpcId: !Ref testVPC
+  
+  testPublicSN1:     #test Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref testVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.1.1.0/24
+      Tags:
+        - Key: Name
+          Value: test-Public-SN1
+          
+  testPublicSN2:     #test Public 서브넷1 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref testVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.1.2.0/24
+      Tags:
+        - Key: Name
+          Value: test-Public-SN2
+
+  testPrivateSN1:     #test Private 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref testVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 세 번째 AZ 목록 반환 (가용 영역 C)
+      CidrBlock: 10.1.3.0/24
+      Tags:
+        - Key: Name
+          Value: test-Private-SN1
+          
+  testPrivateSN2:     #test Private 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref testVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]     #현재 리전의 세 번째 AZ 목록 반환 (가용 영역 C)
+      CidrBlock: 10.1.4.0/24
+      Tags:
+        - Key: Name
+          Value: test-Private-SN1
+
+  testPublicRT:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref testVPC
+      Tags:
+        - Key: Name
+          Value: test-Public-RT
+          
+  DefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: testIGWAttachment     #testIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref testPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref testIGW
+      
+  testPrivateRT:     #프라이빗 서브넷용1 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref testVPC
+      Tags:
+        - Key: Name
+          Value: test-Private-RT
+  
+  NATRoute:     #프라이빗 라우팅 테이블1에 경로 추가 해줌 
+    Type: AWS::EC2::Route
+    DependsOn: testIGWAttachment
+    Properties:
+      RouteTableId: !Ref testPrivateRT
+      DestinationCidrBlock: 0.0.0.0/0
+      NetworkInterfaceId: !Ref Instance1ENIEth0
+          
+  testPrivateRT2:     #프라이빗 서브넷용2 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref testVPC
+      Tags:
+        - Key: Name
+          Value: test-Private-RT2
+                   
+  NATRoute2:     #프라이빗 라우팅 테이블2에 경로 추가 해줌 
+    Type: AWS::EC2::Route
+    DependsOn: testIGWAttachment
+    Properties:
+      RouteTableId: !Ref testPrivateRT2
+      DestinationCidrBlock: 0.0.0.0/0
+      NetworkInterfaceId: !Ref Instance1ENIEth02
+  
+  testPublicSNRouteTableAssociation:     #Public 서브넷1을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref testPublicRT
+      SubnetId: !Ref testPublicSN1
+      
+  testPublicSNRouteTableAssociation2:     #Public 서브넷2을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref testPublicRT
+      SubnetId: !Ref testPublicSN2
+      
+  testPrivateSNRouteTableAssociation:     #Private 서브넷을 Private 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref testPrivateRT
+      SubnetId: !Ref testPrivateSN1
+      
+  testPrivateSNRouteTableAssociation2:     #Private 서브넷2을 Private 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref testPrivateRT2
+      SubnetId: !Ref testPrivateSN2
+      
+  testSecurityGroup:     #EC2 인스턴스에 적용되는 가상 방화벽
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref testVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0  
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  NATInstance1:     #NAT-Instance1 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SourceDestCheck: false
+      Tags:
+        - Key: Name
+          Value: NAT-Instance1
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref Instance1ENIEth0
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            set -euxo pipefail
+            # Egress 인터페이스 자동 추출
+            IFACE="$(ip route show default | awk '/default/ {print $5; exit}')"
+            # iptables 서비스 설치/활성화
+            dnf install -y iptables-services
+            systemctl enable --now iptables
+            # IP 포워딩 상시 활성화
+            cat >/etc/sysctl.d/90-nat.conf <<'EOF'
+            net.ipv4.ip_forward=1
+            EOF
+            sysctl --system
+            # NAT 규칙 초기화 및 설정
+            /sbin/iptables -t nat -F
+            /sbin/iptables -F FORWARD
+            /sbin/iptables -P FORWARD ACCEPT
+            /sbin/iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+            service iptables save
+            
+  Instance1ENIEth0:     #ENI 생성
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref testPublicSN1
+      Description: Instance1 eth0
+      GroupSet:
+        - !Ref testSecurityGroup
+      PrivateIpAddress: 10.1.1.10
+      Tags:
+        - Key: Name
+          Value: NAT-Instance eth0
+          
+  VPCEIP1:     #EIP 생성
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      
+  VPNAssociateEIP1:     #EIP 연결
+    Type: AWS::EC2::EIPAssociation
+    DependsOn: NATInstance1
+    Properties:
+      AllocationId: !GetAtt VPCEIP1.AllocationId
+      NetworkInterfaceId: !Ref Instance1ENIEth0
+      
+  NATInstance2:     #NAT-Instance2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SourceDestCheck: false
+      Tags:
+        - Key: Name
+          Value: NAT-Instance2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref Instance1ENIEth02
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            set -euxo pipefail
+            # Egress 인터페이스 자동 추출
+            IFACE="$(ip route show default | awk '/default/ {print $5; exit}')"
+            # iptables 서비스 설치/활성화
+            dnf install -y iptables-services
+            systemctl enable --now iptables
+            # IP 포워딩 상시 활성화
+            cat >/etc/sysctl.d/90-nat.conf <<'EOF'
+            net.ipv4.ip_forward=1
+            EOF
+            sysctl --system
+            # NAT 규칙 초기화 및 설정
+            /sbin/iptables -t nat -F
+            /sbin/iptables -F FORWARD
+            /sbin/iptables -P FORWARD ACCEPT
+            /sbin/iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+            service iptables save
+            
+  Instance1ENIEth02:     #ENI 생성
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref testPublicSN2
+      Description: Instance1 eth02
+      GroupSet:
+        - !Ref testSecurityGroup
+      PrivateIpAddress: 10.1.2.10
+      Tags:
+        - Key: Name
+          Value: NAT-Instance eth02
+          
+  VPCEIP12:     #EIP 생성
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      
+  VPNAssociateEIP12:     #EIP 연결
+    Type: AWS::EC2::EIPAssociation
+    DependsOn: NATInstance2
+    Properties:
+      AllocationId: !GetAtt VPCEIP12.AllocationId
+      NetworkInterfaceId: !Ref Instance1ENIEth02
+      
+  myLaunchTemplate1:     # 시작 템플릿 생성하기 
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${AWS::StackName}-launch-template-for-auto-scaling-1'
+      VersionDescription: !Sub 'Initial version for ${AWS::StackName} Launch Template'
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            #AssociatePublicIpAddress: true
+            Groups:
+              - !Ref testSecurityGroup
+            DeleteOnTermination: true
+        ImageId: !Ref LatestAmiId
+        InstanceType: t3.micro
+        KeyName: !Ref KeyName
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              (
+              echo "qwe123"
+              echo "qwe123"
+              ) | passwd --stdin root
+              sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+              sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+              service sshd restart
+              hostnamectl --static set-hostname Seoul-AWS-WebSrv1
+              cat <<EOT > /etc/profile.d/prompt.sh
+              export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+              EOT
+              source /etc/profile
+              TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+                -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+              RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+              IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+              LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+              dnf install -y httpd php htop tmux
+              systemctl start httpd && systemctl enable httpd
+              echo "<h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1>" > /var/www/html/index.html
+              echo "1" > /var/www/html/HealthCheck.txt
+              curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent 
+
+  ASG1:     #Auto Scaling Group 생성 
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: webserverASG
+      VPCZoneIdentifier:
+        - !Ref testPrivateSN1
+        - !Ref testPrivateSN2
+      Cooldown: 10
+      HealthCheckGracePeriod: 120
+      HealthCheckType: ELB     #헬스체크는 로드 밸런서가 더 좋아서 이렇게 설정함
+      LaunchTemplate:
+        LaunchTemplateId: !Ref myLaunchTemplate1
+        Version: !GetAtt myLaunchTemplate1.LatestVersionNumber
+      MaxSize: 4
+      MinSize: 1
+      DesiredCapacity: 2
+      TargetGroupARNs:
+        -  !Ref ALBTG     #타겟 그룹 연결
+      Tags:
+        - Key: Name
+          Value: web-asg
+          PropagateAtLaunch: true
+    
+    UpdatePolicy:     #CloudFormation 업데이트 시 Rolling Update 수행. 시작 템플릿 실행시 기존 인스턴스 삭제후 재 실행 
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT2M
+
+  # testPublicEc21:     #Public EC21 인스턴스 생성
+    # Type: AWS::EC2::Instance
+    # Properties:
+      # InstanceType: t3.micro
+      # ImageId: ami-0389ea382ca31bd7f
+      # KeyName: !Ref KeyName
+      # Tags:
+        # - Key: Name
+          # Value: test-Public-EC21
+      # NetworkInterfaces:     #ENI를 정의하는 구조
+        # - DeviceIndex: 0
+          # SubnetId: !Ref testPublicSN1
+          # GroupSet:
+            # - !Ref testSecurityGroup
+          # AssociatePublicIpAddress: true     #공인IP할당
+          
+  # testPublicEc22:     #Public EC22 인스턴스 생성
+    # Type: AWS::EC2::Instance
+    # Properties:
+      # InstanceType: t3.micro
+      # ImageId: ami-0389ea382ca31bd7f
+      # KeyName: !Ref KeyName
+      # Tags:
+        # - Key: Name
+          # Value: test-Public-EC22
+      # NetworkInterfaces:     #ENI를 정의하는 구조
+        # - DeviceIndex: 0
+          # SubnetId: !Ref testPublicSN2
+          # GroupSet:
+            # - !Ref testSecurityGroup
+          # AssociatePublicIpAddress: true     #공인IP할당
+          
+  # testPrivateEc21:     #Private EC21 인스턴스 생성
+    # Type: AWS::EC2::Instance
+    # Properties:
+      # InstanceType: t3.micro
+      # ImageId: ami-0389ea382ca31bd7f
+      # KeyName: !Ref KeyName
+      # Tags:
+        # - Key: Name
+          # Value: test-Private-EC2-1
+      # NetworkInterfaces:     #ENI를 정의하는 구조
+        # - DeviceIndex: 0
+          # SubnetId: !Ref testPrivateSN1
+          # GroupSet:
+            # - !Ref testSecurityGroup
+          # PrivateIpAddress: 10.1.3.10
+      # UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        # Fn::Base64:
+          # !Sub |
+            # !/bin/bash
+            # (
+            # echo "qwe123"
+            # echo "qwe123"
+            # ) | passwd --stdin root
+            # sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+            # sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+            # service sshd restart
+            # hostnamectl --static set-hostname Seoul-AWS-WebSrv1
+            # cat <<EOT > /etc/profile.d/prompt.sh
+            # export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+            # EOT
+            # source /etc/profile
+            # TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              # -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            # RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            # IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            # LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            # dnf install -y httpd php htop tmux
+            # systemctl start httpd && systemctl enable httpd
+            # echo "<h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1>" > /var/www/html/index.html
+            # echo "1" > /var/www/html/HealthCheck.txt
+            # curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent 
+            
+  # testPrivateEc22:     #Private EC22 인스턴스 생성
+    # Type: AWS::EC2::Instance
+    # Properties:
+      # InstanceType: t3.micro
+      # ImageId: ami-0389ea382ca31bd7f
+      # KeyName: !Ref KeyName
+      # Tags:
+        # - Key: Name
+          # Value: test-Private-EC2-2
+      # NetworkInterfaces:     #ENI를 정의하는 구조
+        # - DeviceIndex: 0
+          # SubnetId: !Ref testPrivateSN2
+          # GroupSet:
+            # - !Ref testSecurityGroup
+          # PrivateIpAddress: 10.1.4.10
+      # UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        # Fn::Base64:
+          # !Sub |
+            # !/bin/bash
+            # (
+            # echo "qwe123"
+            # echo "qwe123"
+            # ) | passwd --stdin root
+            # sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+            # sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+            # service sshd restart     #변경된 설정을 위해 서비스 재시작
+            # hostnamectl --static set-hostname Seoul-AWS-WebSrv2     #hostname 설정
+            # cat <<EOT > /etc/profile.d/prompt.sh    #프롬프트 커스터마이징 
+            # export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+            # EOT
+            # source /etc/profile
+            # TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              # -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            # RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            # IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            # LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+            # dnf install -y httpd php htop tmux     #Http 설정 
+            # systemctl start httpd && systemctl enable httpd
+            # echo "<h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1>" > /var/www/html/index.html
+            # echo "1" > /var/www/html/HealthCheck.txt
+            # curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent
+ 
+  # ALB 생성
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: AWS-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref testSecurityGroup
+      Subnets:
+        - !Ref testPublicSN1
+        - !Ref testPublicSN2
+        
+  # ALB 대상 그룹
+  ALBTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: ALB-TG
+      Port: 80
+      Protocol: HTTP
+      HealthCheckIntervalSeconds: 10
+      VpcId: !Ref testVPC
+      # Targets:    # 오토 스케일링 그룹에서 자동 등록해줄거니깐 target 부분은 주석 처리 
+        # - Id: !Ref testPrivateEc21
+          # Port: 80
+        # - Id: !Ref testPrivateEc22
+          # Port: 80
+          
+  # ALB 리스너 생성
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+ 
+# Outputs:     #각 EC2 Public&Private IP 추출
+  # PublicEC2:
+    # Description: Public IP assigned to VPC2 Instance1 eth0 interface
+    # Value: !GetAtt CloudNetaPublicEc2.PublicIp
+  # PrivateEC2:
+    # Description: Private IP assigned to VPC2 Instance2 eth0 interface
+    # Value: !GetAtt CloudNetaPrivateEc2.PrivateIp
+  # PrivateEC22:
+    # Description: Private IP assigned to VPC2 Instance2 eth0 interface
+    # Value: !GetAtt CloudNetaPrivate2Ec2.PrivateIp

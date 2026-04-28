@@ -1,0 +1,434 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
+
+Resources:
+  IDCVPC:     #idc 가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.60.0.0/16
+      Tags:
+        - Key: Name
+          Value: IDC-VPC
+          
+  AWSVPC:     #aws 가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.50.0.0/16
+      Tags:
+        - Key: Name
+          Value: AWS-VPC
+          
+  IDCIGW:     #IDC VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IDC-IGW
+          
+  IDCIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IDCIGW
+      VpcId: !Ref IDCVPC
+      
+  AWSIGW:     #AWS VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: AWS-IGW
+          
+  AWSIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref AWSIGW
+      VpcId: !Ref AWSVPC
+  
+  IDCPublicSN:     #IDC Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IDCVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.60.0.0/24
+      Tags:
+        - Key: Name
+          Value: IDC-Public-SN
+
+  IDCPrivateSN:     #IDC Private 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref IDCVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 세 번째 AZ 목록 반환 (가용 영역 C)
+      CidrBlock: 10.60.1.0/24
+      Tags:
+        - Key: Name
+          Value: IDC-Private-SN
+          
+  AWSPublicSN:     #AWS Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AWSVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.50.1.0/24
+      Tags:
+        - Key: Name
+          Value: AWS-Public-SN
+          
+  AWSSN2:     #AWS TGW 연동용 서브넷 생성 
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AWSVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.50.2.0/24
+      Tags:
+        - Key: Name
+          Value: AWS-SN-2
+          
+  AWSRT2:     #연동용 서브넷 RT
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AWSVPC
+      Tags:
+        - Key: Name
+          Value: AWS-RT2
+          
+  AWSRTAssociation:     #AWSSN2 라우팅테이블 연결 
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AWSRT2
+      SubnetId: !Ref AWSSN2
+
+  IDCPublicRT:     #IDC 퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IDCVPC
+      Tags:
+        - Key: Name
+          Value: IDC-Public-RT
+          
+  DefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: IDCIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref IDCPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref IDCIGW
+      
+  IDCPrivateRT:     #프라이빗 서브넷용 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref IDCVPC
+      Tags:
+        - Key: Name
+          Value: IDC-Private-RT
+          
+  IDCToAWSRoute:     # IDC Private -> AWS 라우팅
+    Type: AWS::EC2::Route
+    DependsOn: IDCCGW
+    Properties:
+      RouteTableId: !Ref IDCPrivateRT
+      DestinationCidrBlock: 10.50.0.0/16
+      NetworkInterfaceId: !Ref IDCCGWENI
+          
+  AWSPublicRT:     #AWS 퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AWSVPC
+      Tags:
+        - Key: Name
+          Value: AWS-Public-RT
+          
+  DefaultAWSPublicRoute:     #퍼블릭 AWS RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: AWSIGWAttachment     #AWSIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref AWSPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref AWSIGW
+      
+  
+  IDCPublicSNRouteTableAssociation:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref IDCPublicRT
+      SubnetId: !Ref IDCPublicSN
+      
+  IDCPrivateSNRouteTableAssociation:     #Private 서브넷을 Private 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref IDCPrivateRT
+      SubnetId: !Ref IDCPrivateSN
+      
+  AWSPublicSNRouteTableAssociation:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AWSPublicRT
+      SubnetId: !Ref AWSPublicSN
+      
+
+      
+  VPC1IDCCGWSG:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref IDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '4500'
+          ToPort: '4500'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '500'
+          ToPort: '500'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  VPC1IDCEC2SG:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref IDCVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '4500'
+          ToPort: '4500'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  VPC2IDCEC2SG:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref AWSVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '4500'
+          ToPort: '4500'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  IDCCGWENI:     # ENI 생성 
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref IDCPublicSN
+      PrivateIpAddress: 10.60.0.100
+      GroupSet:
+        - !Ref VPC1IDCCGWSG
+          
+  CGWEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  CGWEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt CGWEIP.AllocationId
+      NetworkInterfaceId: !Ref IDCCGWENI
+
+  IDCCGW:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      SourceDestCheck: false
+      InstanceType: t3.small
+      ImageId: ami-06b18c6a9a323f75f     #로키 9 이미지
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-CGW-Public-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref IDCCGWENI       
+          
+  IDCEC2:     #Private EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: IDC-Private-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref IDCPrivateSN
+          GroupSet:
+            - !Ref VPC1IDCEC2SG
+          PrivateIpAddress: 10.60.1.100     # 사설 IP 직접 할당 
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config     #SSH 비밀번호 로그인 허용
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config     #root 계정 SSH 로그인 허용
+            service sshd restart     #SSH 서비스 재시작
+            hostnamectl --static set-hostname Seoul-AWS-WebSrv1     #서버 hostname을 Seoul-AWS-WebSrv1로 변경
+            cat <<EOT > /etc/profile.d/prompt.sh     #쉘 프롬프트 색상 및 형식 설정
+            export PS1="[\[\e[1;31m\]\u\[\e[m\]@\[\e[1;32m\]\h\[\e[m\]: \[\e[1;36m\]\w\[\e[m\]]#"
+            EOT
+            source /etc/profile
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")     #EC2 메타데이터 접근용 토큰 생성 (IMDSv2)
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)     #EC2의 Availability Zone ID 조회
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)     #EC2 Instance ID 조회
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)     #EC2 Private IP 조회
+            dnf install -y httpd php htop tmux     #Apache 웹서버 & PHP 실행 & 시스템 모니터링 & 터미널 세션관리 패키지 설치
+            systemctl start httpd && systemctl enable httpd     #Apache 웹서버 실행 + 부팅 시 자동 실행
+            echo "<h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1>" > /var/www/html/index.html     #index.html 웹페이지 생성
+            echo "1" > /var/www/html/HealthCheck.txt     #헬스체크용 파일 생성 (보통 로드밸런서 health check )
+            curl -o /var/www/html/load.php https://cloudneta-book.s3.ap-northeast-2.amazonaws.com/chapter5/load.php --silent     #load 테스트용 PHP 파일 다운로드            
+    
+  AWSEC2:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: AWS-EC2-Public
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref AWSPublicSN
+          GroupSet:
+            - !Ref VPC2IDCEC2SG
+          AssociatePublicIpAddress: true     #공인IP할당
+          PrivateIpAddress: 10.50.1.100    # 사설 IP
+          
+  # VPC2VPNGW:     #AWS VPC에 VPN 연결을 위한 Virtual Private Gateway 생성
+    # Type: AWS::EC2::VPNGateway
+    # Properties:
+      # Type: ipsec.1
+      # AmazonSideAsn: 64512
+      # Tags:
+        # - Key: Name
+          # Value: AWS-VPNGW
+          
+  # VPC2AttachVPNGW:     #생성한 VPN Gateway를 AWS VPC에 연결
+    # Type: AWS::EC2::VPCGatewayAttachment
+    # Properties:
+      # VpcId: !Ref AWSVPC
+      # VpnGatewayId: !Ref VPC2VPNGW
+      
+  VPC2CGW:     # 온프레미스(IDC) VPN 장비를 Customer Gateway로 등록
+    Type: AWS::EC2::CustomerGateway
+    Properties:
+      Type: ipsec.1
+      BgpAsn: 65010
+      IpAddress: !Ref CGWEIP     
+      Tags:
+        - Key: Name
+          Value: IDC-VPN-CGW
+          
+  VPCAWSVpnConnection:     #TGW와 온프레미스 간 IPsec VPN 터널 생성
+    Type: AWS::EC2::VPNConnection
+    Properties:
+      Type: ipsec.1
+      CustomerGatewayId: !Ref VPC2CGW
+      TransitGatewayId: !Ref TransitGateway1     #TransitGateway로 설정
+      VpnTunnelOptionsSpecifications:
+        - PreSharedKey: cloudneta
+          TunnelInsideCidr: 169.254.178.132/30
+        - PreSharedKey: cloudneta
+          TunnelInsideCidr: 169.254.154.168/30
+      Tags:
+        - Key: Name
+          Value: AWS-VPNConnection-IDC
+          
+  # VPNAWSGatewayRoutePropagation:     #VPN에서 받은 라우트를 Route Table에 자동 추가
+    # Type: AWS::EC2::VPNGatewayRoutePropagation
+    # DependsOn: VPC2AttachVPNGW
+    # Properties:
+      # RouteTableIds:
+        # - !Ref AWSPublicRT
+      # VpnGatewayId: !Ref VPC2VPNGW
+          
+  TransitGateway1:     #TGW 생성 
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: TGW1
+        
+  TransitGatewayAtt1:     #AWS VPC를 TGW에 연결하는 Attachment 생성
+    Type: AWS::EC2::TransitGatewayAttachment
+    DependsOn: AWSVPC
+    Properties:
+      VpcId: !Ref AWSVPC
+      SubnetIds:
+        - !Ref AWSSN2
+      TransitGatewayId: !Ref TransitGateway1
+      Tags:
+        - Key: Name
+          Value: TGW1-ATT1-VPC2
+          
+  VPC2Route3:     #AWS VPC에서 IDC 대역으로 가는 트래픽을 TGW로 라우팅
+    Type: AWS::EC2::Route
+    DependsOn: TransitGatewayAtt1
+    Properties:
+      RouteTableId: !Ref AWSPublicRT
+      DestinationCidrBlock: 10.60.0.0/16
+      TransitGatewayId: !Ref TransitGateway1
+  
+
+          
+Outputs:     #각 EC2 Public&Private IP 추출
+  IDCCGW:
+    Description: Public up of IDCCGW
+    Value: !GetAtt IDCCGW.PublicIp
+  IDCEC2:
+    Description: Private up of IDCEC2
+    Value: !GetAtt IDCEC2.PrivateIp
+  AWSEC2:
+    Description: Public up of AWSEC2
+    Value: !GetAtt AWSEC2.PublicIp

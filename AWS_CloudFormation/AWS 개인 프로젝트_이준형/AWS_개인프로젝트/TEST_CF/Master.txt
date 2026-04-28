@@ -1,0 +1,96 @@
+Master
+===================
+
+yum install -y https://dev.mysql.com/get/mysql80-community-release-el7-6.noarch.rpm
+
+
+rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2022
+CF)  rpm --import https://repo.mysql.com/RPM-GPG-KEY-mysql-2023
+yum update -y
+yum install -y mysql-server
+systemctl enable --now mysqld
+systemctl restart mysqld
+firewall-cmd --permanent --add-service=mysql
+firewall-cmd --reload
+========================================================
+PHP 설치
+yum install -y php php-mysql
+========================================================
+
+vim /etc/my.cnf 아래 내용 삽입
+
+collation-server=utf8mb4_general_ci
+character-set-server=utf8mb4
+validate_password.policy=LOW
+default_authentication_plugin=mysql_native_password
+bind-address=0.0.0.0
+
+server-id=1
+
+[client]
+#default-character-set=utf8mb4
+
+[mysql]
+#default-character-set=utf8mb4
+===========================
+
+systemctl restart mysqld
+
+grep 'temporary password' /var/log/mysqld.log  => 임시 비밀번호 확인
+mysql_secure_installation  => password 설정 진행
+
+mysql -u root -p
+========================================================
+--mysql user1@'%' 사용자 생성 및 sqlDB 접속 권한 설정
+CREATE USER 'user1'@'localhost' IDENTIFIED BY 'p@ssw0rd';
+GRANT ALL PRIVILEGES ON sqlDB.* TO 'user1'@'localhost';
+FLUSH PRIVILEGES;
+
+DB내의 기존 한글data도 utf8mb4로 변경해야함.
+
+DB 접속 후
+
+SHOW VARIABLES LIKE 'character_set%';
+SHOW VARIABLES LIKE 'collation%';
+
+위 명령어로 인코딩 방식 확인
+
+아래 명령어로 기존 테이블의 인코딩 방식을 utf8mb4로 변경해야함
+
+ALTER TABLE 테이블명 CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+
+-- 1. Slave용 계정이 있는지 확인 (없다면 다시 생성)
+CREATE USER IF NOT EXISTS 'user1'@'192.168.111.200' IDENTIFIED BY 'p@ssw0rd';
+
+-- 2. 복제 권한 다시 부여 (이게 핵심입니다!)
+GRANT REPLICATION SLAVE ON *.* TO 'user1'@'192.168.111.200';
+
+-- 3. 설정 즉시 반영
+FLUSH PRIVILEGES;
+
+==================
+레미 설치 
+yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+yum install -y yum-utils
+sudo yum-config-manager --disable 'remi-php*'
+sudo yum-config-manager --enable remi-php74
+yum install -y php php-cli php-common pjp-fpm php-mysqlnd php-mbstring
+
+systemctl restart httpd
+
+=========
+php 및 html 넣고
+필요시 옮기기 cp /home/user1/* /var/www/html/
+sudo scp -r /home/ec2-user/* 10.1.3.100:/var/www/html/
+sudo scp -r /home/ec2-user/* 10.3.3.100:/var/www/html/
+
+# 80번 포트(HTTP) 영구 허용
+firewall-cmd --permanent --add-service=http
+# 설정 반영
+firewall-cmd --reload
+
+
+
+
+sudo vi /etc/resolv.conf
+nameserver 8.8.8.8

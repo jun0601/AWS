@@ -1,0 +1,228 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
+
+Resources:
+  SYDNEYVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: SYDNEY-VPC
+          
+  SYDNEYIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: SYDNEY-IGW
+          
+  SYDNEYIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref SYDNEYIGW
+      VpcId: !Ref SYDNEYVPC
+  
+  SYDNEYPublicSN1:     #Public 서브넷 생성 1
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SYDNEYVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.0.0/24
+      Tags:
+        - Key: Name
+          Value: SYDNEY-Public-SN1
+
+  SYDNEYPublicSN2:     #Public 서브넷 생성 2
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SYDNEYVPC
+      AvailabilityZone: !Select [ 2, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.0.1.0/24
+      Tags:
+        - Key: Name
+          Value: SYDNEY-Public-SN2
+
+  SYDNEYPublicRT:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SYDNEYVPC
+      Tags:
+        - Key: Name
+          Value: SYDNEY-Public-RT
+          
+  DefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: SYDNEYIGWAttachment     #TESTIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref SYDNEYPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SYDNEYIGW
+  
+  SYDNEYPublicSNRouteTableAssociation1:     #Public 서브넷1을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SYDNEYPublicRT
+      SubnetId: !Ref SYDNEYPublicSN1
+      
+  SYDNEYPublicSNRouteTableAssociation2:     #Public 서브넷2을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref SYDNEYPublicRT
+      SubnetId: !Ref SYDNEYPublicSN2
+      
+  WEBSG:     #보안그룹 하나 생성
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref SYDNEYVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '53'
+          ToPort: '53'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: '53'
+          ToPort: '53'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  SYDENYEC21:     #Public EC21 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: SYDENY-Public-EC21
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref SYDNEYPublicSN1
+          GroupSet:
+            - !Ref WEBSG
+          AssociatePublicIpAddress: true     #공인IP할당
+          
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)              
+            wget https://cloudneta.github.io/test.jpg
+            wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+            dnf install -y nginx
+            echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+            systemctl start nginx
+            systemctl enable nginx
+              
+  SYDENYEC22:     #Public EC22 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: SYDENY-Public-EC22
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref SYDNEYPublicSN2
+          GroupSet:
+            - !Ref WEBSG
+          AssociatePublicIpAddress: true     #공인IP할당
+          
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+              -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+            RZAZ=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone-id)
+            IID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+            LIP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)              
+            wget https://cloudneta.github.io/test.jpg
+            wget -P /usr/share/nginx/html/ https://cloudneta.github.io/test.jpg
+            dnf install -y nginx             
+            echo "<head><link rel='icon' href='data:;base64,iVBORw0KGgo='></head><h1>RegionAz($RZAZ) : Instance ID($IID) : Private IP($LIP) : Main Web-Soldesk</h1><img src='test.jpg'>" > /usr/share/nginx/html/index.html
+            systemctl start nginx
+            systemctl enable nginx
+              
+  # ALB 생성
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: AWS-ALB
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref WEBSG
+      Subnets:
+        - !Ref SYDNEYPublicSN1
+        - !Ref SYDNEYPublicSN2
+        
+  # ALB 대상 그룹
+  ALBTG:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: ALB-TG
+      Port: 80
+      Protocol: HTTP
+      HealthCheckIntervalSeconds: 10
+      VpcId: !Ref SYDNEYVPC
+      Targets:    # 오토 스케일링 그룹에서 자동 등록해줄거니깐 target 부분은 주석 처리 
+        - Id: !Ref SYDENYEC21
+          Port: 80
+        - Id: !Ref SYDENYEC22
+          Port: 80
+          
+  # ALB 리스너 생성
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTG
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP  
+      
+  PublicDNS:     #Public DNS 영역 생성 
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: zxxnwood.cloud
+      HostedZoneConfig:
+        Comment: Public hosted zone For zxxnwood.cloud
+          
+  
+Outputs:     #각 EC2 Public&Private IP 추출
+  PublicEC21:
+    Description: SYDENYEC21.PublicIp
+    Value: !GetAtt SYDENYEC21.PublicIp
+  PublicEC22:
+    Description: SYDENYEC22.PublicIp
+    Value: !GetAtt SYDENYEC22.PublicIp

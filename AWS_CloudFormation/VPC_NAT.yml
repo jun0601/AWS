@@ -1,0 +1,304 @@
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  LatestAmiId:
+    Description: (DO NOT CHANGE)
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    AllowedValues:
+      - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
+
+Resources:
+  NATInstanceVPC:     #가상 네트워크 공간 생성
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: 10.40.0.0/16
+      Tags:
+        - Key: Name
+          Value: NATInstance-VPC
+          
+  NATInstanceIGW:     #VPC를 인터넷과 연결하는 출입문
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: NATInstance-IGW
+          
+  NATInstanceIGWAttachment:     #IGW를 VPC에 실제로 연결
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref NATInstanceIGW
+      VpcId: !Ref NATInstanceVPC
+  
+  NATInstancePublicSN:     #Public 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref NATInstanceVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 첫 번째 AZ 목록 반환 (가용 영역 A)
+      CidrBlock: 10.40.1.0/24
+      Tags:
+        - Key: Name
+          Value: NATInstance-Public-SN
+
+  NATInstancePrivateSN:     #Private 서브넷 생성
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref NATInstanceVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]     #현재 리전의 세 번째 AZ 목록 반환 (가용 영역 C)
+      CidrBlock: 10.40.2.0/24
+      Tags:
+        - Key: Name
+          Value: NATInstance-Private-SN
+
+  NATInstancePublicRT:     #퍼블릭용 라우팅 테이블 생성
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref NATInstanceVPC
+      Tags:
+        - Key: Name
+          Value: NATInstance-Public-RT
+          
+  DefaultPublicRoute:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: NATInstanceIGWAttachment     #CloudNetaIGWAttachment가 먼저 생성된 후 만들어지도록 순서 지정해주는 부분
+    Properties:
+      RouteTableId: !Ref NATInstancePublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref NATInstanceIGW
+      
+  NATInstancePrivateRT:     #프라이빗 서브넷용 라우팅 테이블
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref NATInstanceVPC
+      Tags:
+        - Key: Name
+          Value: NATInstance-Private-RT
+          
+  NATRoute1:     #퍼블릭 RT에 기본 인터넷 경로 추가
+    Type: AWS::EC2::Route
+    DependsOn: NATInstance
+    Properties:
+      RouteTableId: !Ref NATInstancePrivateRT
+      DestinationCidrBlock: 0.0.0.0/0
+      NetworkInterfaceId: !Ref Instance1ENIEth0
+  
+  NATInstancePublicSNRouteTableAssociation:     #Public 서브넷을 Public 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref NATInstancePublicRT
+      SubnetId: !Ref NATInstancePublicSN
+      
+  NATInstancePrivateSNRouteTableAssociation:     #Private 서브넷을 Private 라우팅 테이블에 연결
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref NATInstancePrivateRT
+      SubnetId: !Ref NATInstancePrivateSN
+      
+  NATInstanceSecurityGroup:     #EC2 인스턴스에 적용되는 가상 방화벽
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref NATInstanceVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0  
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+          
+  PrivateEc2SecurityGroup:     #PrivateEc2SecurityGroup
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 and SSH access via port 22
+      VpcId: !Ref NATInstanceVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 10.40.0.0/16
+        - IpProtocol: icmp     #icmp는 포트가 없으므로 지정 안함
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  NATInstancePublicEc2:     #Public EC2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: NATInstance-Public-EC2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref NATInstancePublicSN
+          GroupSet:
+            - !Ref NATInstanceSecurityGroup
+          #PrivateIpAddress: 10.40.1.100
+          AssociatePublicIpAddress: true     #공인IP할당
+  
+  Instance1ENIEth0:     #ENI 생성
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref NATInstancePublicSN
+      Description: Instance1 eth0
+      GroupSet:
+        - !Ref NATInstanceSecurityGroup
+      PrivateIpAddress: 10.40.1.101
+      Tags:
+        - Key: Name
+          Value: NAT-Instance eth0
+          
+  VPCEIP1:     #EIP 생성
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      
+  VPNAssociateEIP1:     #EIP 연결
+    Type: AWS::EC2::EIPAssociation
+    DependsOn: NATInstance
+    Properties:
+      AllocationId: !GetAtt VPCEIP1.AllocationId
+      NetworkInterfaceId: !Ref Instance1ENIEth0
+  
+  NATInstance:     #NAT-Instance 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      SourceDestCheck: false
+      Tags:
+        - Key: Name
+          Value: NAT-Instance
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          NetworkInterfaceId: !Ref Instance1ENIEth0
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            set -euxo pipefail
+            # Egress 인터페이스 자동 추출
+            IFACE="$(ip route show default | awk '/default/ {print $5; exit}')"
+            # iptables 서비스 설치/활성화
+            dnf install -y iptables-services
+            systemctl enable --now iptables
+            # IP 포워딩 상시 활성화
+            cat >/etc/sysctl.d/90-nat.conf <<'EOF'
+            net.ipv4.ip_forward=1
+            EOF
+            sysctl --system
+            # NAT 규칙 초기화 및 설정
+            /sbin/iptables -t nat -F
+            /sbin/iptables -F FORWARD
+            /sbin/iptables -P FORWARD ACCEPT
+            /sbin/iptables -t nat -A POSTROUTING -o "$IFACE" -j MASQUERADE
+            service iptables save
+          
+          
+  NATInstancePrivateEc21:     #Private EC2-1 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: NATInstance-Private-EC2-1
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref NATInstancePrivateSN
+          GroupSet:
+            - !Ref PrivateEc2SecurityGroup
+          PrivateIpAddress: 10.40.2.101
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+            service sshd restart    
+            
+  NATInstancePrivateEc22:     #Private EC2-2 인스턴스 생성
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: Name
+          Value: NATInstance-Private-EC2-2
+      NetworkInterfaces:     #ENI를 정의하는 구조
+        - DeviceIndex: 0
+          SubnetId: !Ref NATInstancePrivateSN
+          GroupSet:
+            - !Ref PrivateEc2SecurityGroup
+          PrivateIpAddress: 10.40.2.102
+      UserData:     #인스턴스 시작 시 자동으로 실행할 스크립트 root계정 비밀번호 설정후 SSH설정 변경 후 재시작
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            (
+            echo "qwe123"
+            echo "qwe123"
+            ) | passwd --stdin root
+            sed -i "s/^PasswordAuthentication no/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+            sed -i "s/^#PermitRootLogin prohibit-password/PermitRootLogin yes/g" /etc/ssh/sshd_config
+            service sshd restart   
+  
+  # NATGateWay:     #Private Subnet의 인스턴스가 인터넷으로 나갈 수 있게 해주는 장비
+    # Type: AWS::EC2::NatGateway
+    # Properties:
+      # AllocationId: !GetAtt EIP.AllocationId     #EIP에 할당된 IP를 할당해줌(publicip가 아닌 할당된 ip)
+      # SubnetId: !Ref NATInstancePublicSN
+      # Tags:
+        # - Key: Name
+          # Value: NAT-Gateway
+          
+  # NATRoute:     #프라이빗 라우팅 테이블에 경로 추가 해줌 
+    # Type: AWS::EC2::Route
+    # DependsOn: NATInstanceIGWAttachment
+    # Properties:
+      # RouteTableId: !Ref NATInstancePrivateRT
+      # DestinationCidrBlock: 0.0.0.0/0
+      # NatGatewayId: !Ref NATGateWay
+  
+  # EIP:     #탄력적 IP 할당
+    # Type: AWS::EC2::EIP
+    # Properties:
+      # Domain: vpc    
+      
+Outputs:     #각 EC2 Public&Private IP 추출
+  PublicEC2Public:
+    Description: Public IP
+    Value: !GetAtt NATInstancePublicEc2.PublicIp
+  # PublicEC2Private:
+    # Description: Private IP
+    # Value: !GetAtt NATInstancePublicEc22.PrivateIp
+  PrivateEC21:
+    Description: Private IP 1-1
+    Value: !GetAtt NATInstancePrivateEc21.PrivateIp
+  PrivateEC22:
+    Description: Private IP 3-1
+    Value: !GetAtt NATInstancePrivateEc22.PrivateIp

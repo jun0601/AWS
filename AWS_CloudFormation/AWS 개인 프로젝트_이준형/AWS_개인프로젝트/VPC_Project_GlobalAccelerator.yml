@@ -1,0 +1,84 @@
+Parameters:
+  AlbSeoulArn:     #서울 ALB
+    Type: String
+    Description: ARN of ALB in ap-northeast-2
+    
+  AlbSingaporeArn:     #싱가폴 ALB
+    Type: String
+    Description: ARN of ALB in ap-southeast-1
+    
+  # Ec2SingaporeA:     #싱가포르 인스턴스 1개 
+    # Type: String
+    # Description: EC2 instance ID 1
+    
+  DialSeoul:
+    Type: Number
+    Default: 100
+    MinValue: 0
+    MaxValue: 100
+    Description: traffic dial for ap-northeast-2
+    
+  DialSingapore:
+    Type: Number
+    Default: 100
+    MinValue: 0
+    MaxValue: 100
+    Description: traffic dial for ap-southeast-1
+    
+  WSeoulAlb:
+    Type: Number
+    Default: 255
+    MinValue: 0
+    MaxValue: 255
+    Description: Weight for ALB seoul
+    
+  WSingaporeAlb:
+    Type: Number
+    Default: 255
+    MinValue: 0
+    MaxValue: 255
+    Description: Weight for ALB Singapore1
+    
+Resources:
+  Accelerator:
+    Type: AWS::GlobalAccelerator::Accelerator
+    Properties:
+      Name: !Sub '${AWS::StackName}-ga'
+      Enabled: true
+      IpAddressType: IPV4
+      
+  Listener:     #AWS Global Accelerator Listener 설정
+    Type: AWS::GlobalAccelerator::Listener
+    Properties:
+      AcceleratorArn: !Ref Accelerator
+      Protocol: TCP
+      PortRanges:
+        - FromPort: 80
+          ToPort: 80
+      ClientAffinity: SOURCE_IP     #같은 Client IP → 같은 Endpoint -> 즉 세션 유지 
+        
+  EndpointGroupSeoul:     #서울 리전 엔드포인트 그룹
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref Listener
+      EndpointGroupRegion: ap-northeast-2
+      TrafficDialPercentage: !Ref DialSeoul
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 80
+      EndpointConfigurations:
+        - EndpointId: !Ref AlbSeoulArn
+          Weight: !Ref WSeoulAlb
+          
+  EndpointGroupSingapore:     #싱가포르 리전 엔드포인트 그룹
+    Type: AWS::GlobalAccelerator::EndpointGroup
+    Properties:
+      ListenerArn: !Ref Listener
+      EndpointGroupRegion: ap-southeast-1
+      TrafficDialPercentage: !Ref DialSingapore
+      HealthCheckProtocol: TCP
+      HealthCheckPort: 80
+      EndpointConfigurations:
+        - EndpointId: !Ref AlbSingaporeArn
+          Weight: !Ref WSingaporeAlb
+
+  
