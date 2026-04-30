@@ -28,7 +28,7 @@
         }
 
         .quiz-container {
-            flex: 1.5;
+            flex: 1.7;
             background: rgba(248, 250, 252, 0.75); 
             backdrop-filter: blur(20px); 
             padding: 35px;
@@ -110,7 +110,7 @@
         }
 
         .sidebar {
-            flex: 0.4;
+            flex: 0.48;
             background: rgba(248, 250, 252, 0.75);
             backdrop-filter: blur(20px);
             border-radius: 20px;
@@ -186,7 +186,7 @@
         }
 
         .service-sidebar {
-            flex: 0.7;
+            flex: 0.55;
             background: rgba(248, 250, 252, 0.75);
             backdrop-filter: blur(20px);
             border-radius: 20px; 
@@ -204,6 +204,14 @@
             padding: 15px;
             border-bottom: 1px solid rgba(226, 232, 240, 0.5);
         }
+        #svc-search {
+            width: 100%;           /* 부모 너비에 꽉 채우기 */
+            box-sizing: border-box; /* 패딩과 테두리를 너비에 포함시켜서 삐져나가지 않게 함 */
+            padding: 10px;         /* 텍스트 여백 */
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            display: block;        /* 여백 계산을 명확하게 하기 위해 block 설정 */
+        }
 
         /* 실제 스크롤이 발생하는 영역 */
         .service-scroll-area {
@@ -211,6 +219,11 @@
             overflow-y: auto;   /* 내용 많아지면 스크롤 생성 */
             padding: 15px;
         }   
+        /* 만약 검색창이 부모 테두리에 너무 딱 붙어 보이면, 아래 박스에 여백을 살짝 줍니다. */
+        .service-search-box {
+            padding: 12px 15px;    /* 상하 12px, 좌우 15px */
+            box-sizing: border-box; /* 여기도 같이 넣어주면 안전합니다 */
+        }
 
         .service-title {
             font-size: 1rem;
