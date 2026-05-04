@@ -11,7 +11,7 @@ Parameters:
       - /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 
 
 Resources:
-  IDCVPC:     #idc 가상 네트워크 공간 생성
+  IDCVPC:     #IDC 가상 네트워크 공간 생성
     Type: AWS::EC2::VPC
     Properties:
       EnableDnsSupport: true
