@@ -10444,7 +10444,7 @@
       "D": "API Gateway REST API 의 요청을 여러 Amazon Simple Queue Service(Amazon SQS)\n대기열로 보냅니다. 다양한 SQS 대기열을 폴링하도록 대상 Lambda 함수를 구성합니다."
     },
     "answer": "B",
-    "explanation": "A??",
+    "explanation": "여러 타겟으로 이벤트 전달 (fan-out), Rule 기반 필터링 가능, Lambda 직접 트리거, 완전 서버리스",
     "aws_service": "Amazon API Gateway",
     "link": "https://www.examtopics.com/discussions/amazon/view/132929-exam-aws-certified-solutions-architect-associate-saa-c03/"
   },
