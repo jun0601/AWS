@@ -12529,8 +12529,8 @@
       "C": "EBS 볼륨의 암호화된 복사본을 생성하도록 AWS 시스템 관리자를 구성합니다. 암호화된\n볼륨을 사용하도록 EC2 인스턴스를 재구성합니다.",
       "D": "AWS Key Management Service(AWS KMS)에서 고객 관리형 키를 생성합니다. 회사가\n워크로드를 마이그레이션할 때 키를 사용하도록 AWS Migration Hub 를 구성합니다."
     },
-    "answer": "B",
-    "explanation": "A??",
+    "answer": "A",
+    "explanation": "A라고 GPT가 컨펌함 새로 생성되는 모든 EBS를 기본적으로 암호화 + 암호화 안 된 볼륨 생성 자체를 막아라 => Amazon EC2 계정 수준에서 EBS 기본 암호화 활성화 ",
     "aws_service": "AWS KMS",
     "link": "https://www.examtopics.com/discussions/amazon/view/140296-exam-aws-certified-solutions-architect-associate-saa-c03/"
   },
