@@ -559,6 +559,9 @@
             <button class="tool-btn" id="bookmark-filter-btn" onclick="setFilter('bookmark')" title="북마크 목록">🔖 북마크</button>
             <button class="tool-btn reset-btn" onclick="confirmReset()" title="기록 초기화">🗑 초기화</button>
         </div>
+        <button onclick="openExamModal()" style="width:100%; margin-bottom:10px; background: linear-gradient(135deg,#6366f1,#ff9900); color:white; border:none; font-size:0.85rem; padding:10px; border-radius:9px; cursor:pointer; font-weight:700;">
+            📝 모의고사 시작 (65문제 / 90분)
+        </button>
 
         <div class="filter-container">
             <button id="all-view-btn" class="filter-btn active" onclick="setFilter('all')">전체 문제</button>
@@ -868,12 +871,18 @@
 
     // ====== 선택 토글 ======
     function toggleOption(el, key) {
+        if (el.classList.contains('disabled')) return;
         if (selectedOptions.has(key)) {
             selectedOptions.delete(key);
             el.classList.remove('selected');
         } else {
             selectedOptions.add(key);
             el.classList.add('selected');
+        }
+        // 모의고사 중이면 답 저장
+        if (examMode) {
+            const q = examQuestions[currentIdx];
+            if (q) { examAnswers[q.id] = Array.from(selectedOptions).sort(); updateExamProgress(); }
         }
     }
 
@@ -1021,6 +1030,182 @@
         }
     });
 
+
+    // ====== 모의고사 모드 ======
+    let examMode = false;
+    let examQuestions = [];
+    let examAnswers = {};
+    let examTimerInterval = null;
+    let examSeconds = 90 * 60;
+
+    const DOMAIN_TARGETS = { 1: 20, 2: 17, 3: 16, 4: 12 };
+    const DOMAIN_NAMES = {
+        1: 'Design Secure Architectures',
+        2: 'Design Resilient Architectures',
+        3: 'Design High-Performing Architectures',
+        4: 'Design Cost-Optimized Architectures'
+    };
+    const DOMAIN_COLORS = { 1: '#6366f1', 2: '#10b981', 3: '#ff9900', 4: '#f43f5e' };
+
+    function openExamModal() {
+        document.getElementById('exam-start-panel').style.display = 'block';
+        document.getElementById('exam-result-panel').style.display = 'none';
+        document.getElementById('exam-modal').style.display = 'flex';
+    }
+    function closeExamModal() {
+        document.getElementById('exam-modal').style.display = 'none';
+    }
+
+    function startExam() {
+        // 도메인별 문제 추출
+        const byDomain = {1:[], 2:[], 3:[], 4:[]};
+        originalData.forEach(q => { const d = q.domain || 2; if (byDomain[d]) byDomain[d].push(q); });
+
+        examQuestions = [];
+        for (const [d, target] of Object.entries(DOMAIN_TARGETS)) {
+            const pool = byDomain[d].slice();
+            // 셔플
+            for (let i = pool.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i+1));
+                [pool[i], pool[j]] = [pool[j], pool[i]];
+            }
+            examQuestions.push(...pool.slice(0, target));
+        }
+        // 전체 셔플
+        for (let i = examQuestions.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i+1));
+            [examQuestions[i], examQuestions[j]] = [examQuestions[j], examQuestions[i]];
+        }
+
+        examAnswers = {};
+        examMode = true;
+        examSeconds = 90 * 60;
+
+        closeExamModal();
+
+        // 오버레이 바 표시
+        const bar = document.getElementById('exam-overlay-bar');
+        bar.style.display = 'flex';
+        document.querySelector('.main-wrapper').style.paddingTop = '56px';
+
+        // 타이머 시작
+        clearInterval(examTimerInterval);
+        updateExamTimer();
+        examTimerInterval = setInterval(() => {
+            examSeconds--;
+            updateExamTimer();
+            if (examSeconds <= 0) { clearInterval(examTimerInterval); submitExam(); }
+        }, 1000);
+
+        // 퀴즈 데이터로 덮기
+        quizData = examQuestions;
+        isRandomMode = false;
+        currentIdx = 0;
+        filterMode = 'exam';
+        renderList();
+        renderQuestion();
+        updateExamProgress();
+        showToast('📝 모의고사 시작! 65문제 · 90분');
+    }
+
+    function updateExamTimer() {
+        const m = String(Math.floor(examSeconds/60)).padStart(2,'0');
+        const s = String(examSeconds%60).padStart(2,'0');
+        const el = document.getElementById('exam-timer-display');
+        el.textContent = `⏱ ${m}:${s}`;
+        el.style.color = examSeconds < 600 ? '#f43f5e' : '#ff9900';
+    }
+
+    function updateExamProgress() {
+        const answered = Object.keys(examAnswers).length;
+        document.getElementById('exam-progress-label').textContent = `${answered} / ${examQuestions.length} 답변`;
+    }
+
+
+
+    function submitExam() {
+        if (examMode && Object.keys(examAnswers).length < examQuestions.length) {
+            const unanswered = examQuestions.length - Object.keys(examAnswers).length;
+            if (unanswered > 0 && !confirm(`아직 ${unanswered}문제를 답하지 않았습니다. 제출하시겠습니까?`)) return;
+        }
+        clearInterval(examTimerInterval);
+        endExam();
+    }
+
+    function endExam() {
+        // 채점
+        let totalCorrect = 0;
+        const domainStats = {1:{c:0,t:0}, 2:{c:0,t:0}, 3:{c:0,t:0}, 4:{c:0,t:0}};
+        const wrongIds = [];
+
+        examQuestions.forEach(q => {
+            const d = q.domain || 2;
+            domainStats[d].t++;
+            const userAns = (examAnswers[q.id] || []).sort();
+            const correct = q.answer.split(',').map(s=>s.trim()).sort();
+            const isCorrect = JSON.stringify(userAns) === JSON.stringify(correct);
+            if (isCorrect) { totalCorrect++; domainStats[d].c++; }
+            else wrongIds.push(q.id);
+        });
+
+        // 점수 계산 (각 문제 동일 배점, 1000점 만점)
+        const score = Math.round((totalCorrect / examQuestions.length) * 1000);
+        const passed = score >= 720;
+
+        // 오답 저장
+        const wn = getWrongNotes();
+        wrongIds.forEach(id => { if (!wn.includes(id)) wn.push(id); });
+        saveWrongNotes(wn);
+        updateWrongCount();
+
+        // 결과 표시
+        document.getElementById('exam-score-num').textContent = score;
+        document.getElementById('exam-score-big').style.background = passed ? 'rgba(16,185,129,0.1)' : 'rgba(244,63,94,0.1)';
+        document.getElementById('exam-pass-badge').innerHTML = passed
+            ? '<span style="color:#10b981;">✅ 합격 (PASS)</span>'
+            : '<span style="color:#f43f5e;">❌ 불합격 (FAIL)</span>';
+
+        // 도메인별 분석
+        let breakdownHtml = '';
+        for (let d = 1; d <= 4; d++) {
+            const {c, t} = domainStats[d];
+            const pct = t > 0 ? Math.round((c/t)*100) : 0;
+            breakdownHtml += `
+                <div style="background:#f8fafc; border-radius:10px; padding:12px; border-left:4px solid ${DOMAIN_COLORS[d]};">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-size:0.82rem; font-weight:600;">Domain ${d}: ${DOMAIN_NAMES[d]}</span>
+                        <span style="font-weight:800; color:${DOMAIN_COLORS[d]};">${c}/${t} (${pct}%)</span>
+                    </div>
+                    <div style="height:6px; background:rgba(0,0,0,0.1); border-radius:10px; overflow:hidden;">
+                        <div style="height:100%; width:${pct}%; background:${DOMAIN_COLORS[d]}; border-radius:10px; transition:width 0.6s;"></div>
+                    </div>
+                </div>`;
+        }
+        document.getElementById('exam-domain-breakdown').innerHTML = breakdownHtml;
+
+        // 오버레이 숨기기
+        document.getElementById('exam-overlay-bar').style.display = 'none';
+        document.querySelector('.main-wrapper').style.paddingTop = '0';
+
+        examMode = false;
+        document.getElementById('exam-start-panel').style.display = 'none';
+        document.getElementById('exam-result-panel').style.display = 'block';
+        document.getElementById('exam-modal').style.display = 'flex';
+
+        // 일반 모드로 복귀
+        quizData = originalData;
+        filterMode = 'all';
+        currentIdx = 0;
+        renderList();
+        renderQuestion();
+    }
+
+    function reviewExam() {
+        closeExamModal();
+        setFilter('wrong');
+        showToast('📖 오답 복습 모드');
+    }
+
     // ====== 페이지 로드 시 테마 복구 ======
     window.addEventListener('DOMContentLoaded', () => {
         if (localStorage.getItem('saa_theme') === 'dark') {
@@ -1030,5 +1215,66 @@
         }
     });
 </script>
+
+<!-- ===== 모의고사 모달 ===== -->
+<div id="exam-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:3000; justify-content:center; align-items:center;">
+    <div id="exam-panel" style="background:#f8fafc; border-radius:20px; padding:36px; width:560px; max-height:90vh; overflow-y:auto; box-shadow:0 24px 60px rgba(0,0,0,0.3);">
+        <!-- 시작 화면 -->
+        <div id="exam-start-panel">
+            <h2 style="margin-top:0; font-size:1.4rem;">📝 SAA-C03 모의고사</h2>
+            <p style="color:#64748b; font-size:0.9rem; line-height:1.7;">
+                실제 시험과 동일한 도메인 비율로 <strong>65문제</strong>를 자동 추출합니다.<br>
+                제한시간 <strong>90분</strong> · 합격 기준 <strong>720점 / 1000점</strong>
+            </p>
+            <div style="background:#f1f5f9; border-radius:12px; padding:16px; margin:16px 0; font-size:0.85rem;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                    <div style="padding:10px; background:white; border-radius:8px; border-left:4px solid #6366f1;">
+                        <strong>Domain 1</strong><br>Secure Architectures<br><span style="color:#6366f1; font-weight:700;">30% · 20문제</span>
+                    </div>
+                    <div style="padding:10px; background:white; border-radius:8px; border-left:4px solid #10b981;">
+                        <strong>Domain 2</strong><br>Resilient Architectures<br><span style="color:#10b981; font-weight:700;">26% · 17문제</span>
+                    </div>
+                    <div style="padding:10px; background:white; border-radius:8px; border-left:4px solid #ff9900;">
+                        <strong>Domain 3</strong><br>High-Performing<br><span style="color:#ff9900; font-weight:700;">24% · 16문제</span>
+                    </div>
+                    <div style="padding:10px; background:white; border-radius:8px; border-left:4px solid #f43f5e;">
+                        <strong>Domain 4</strong><br>Cost-Optimized<br><span style="color:#f43f5e; font-weight:700;">20% · 12문제</span>
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button onclick="closeExamModal()" style="flex:1; padding:12px; border-radius:10px; border:1px solid #cbd5e1; background:white; cursor:pointer; font-weight:600; color:#64748b;">취소</button>
+                <button onclick="startExam()" style="flex:2; padding:12px; border-radius:10px; border:none; background:linear-gradient(135deg,#6366f1,#ff9900); color:white; cursor:pointer; font-weight:700; font-size:1rem;">시험 시작!</button>
+            </div>
+        </div>
+
+        <!-- 결과 화면 -->
+        <div id="exam-result-panel" style="display:none;">
+            <h2 style="margin-top:0; font-size:1.4rem;" id="exam-result-title">📊 시험 결과</h2>
+            <div id="exam-score-big" style="text-align:center; padding:24px; margin:16px 0; border-radius:16px; background:#f1f5f9;">
+                <div style="font-size:3rem; font-weight:900;" id="exam-score-num">--</div>
+                <div style="color:#64748b; font-size:0.9rem;" id="exam-score-label">점 / 1000점</div>
+                <div id="exam-pass-badge" style="margin-top:8px; font-size:1.1rem; font-weight:700;"></div>
+            </div>
+            <div id="exam-domain-breakdown" style="display:grid; gap:8px; margin-bottom:20px;"></div>
+            <div style="display:flex; gap:10px;">
+                <button onclick="closeExamModal()" style="flex:1; padding:12px; border-radius:10px; border:1px solid #cbd5e1; background:white; cursor:pointer; font-weight:600; color:#64748b;">닫기</button>
+                <button onclick="reviewExam()" style="flex:1; padding:12px; border-radius:10px; border:none; background:#475569; color:white; cursor:pointer; font-weight:700;">오답 복습</button>
+                <button onclick="startExam()" style="flex:1; padding:12px; border-radius:10px; border:none; background:linear-gradient(135deg,#6366f1,#ff9900); color:white; cursor:pointer; font-weight:700;">재시험</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 모의고사 진행 오버레이 헤더 -->
+<div id="exam-overlay-bar" style="display:none; position:fixed; top:0; left:0; right:0; z-index:2500; background:linear-gradient(135deg,#1e293b,#334155); color:white; padding:10px 30px; display:none; align-items:center; justify-content:space-between; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+    <span style="font-weight:700; font-size:0.95rem;">📝 모의고사 진행 중</span>
+    <div style="display:flex; align-items:center; gap:20px;">
+        <span id="exam-progress-label" style="font-size:0.85rem; opacity:0.8;"></span>
+        <span id="exam-timer-display" style="font-size:1.1rem; font-weight:800; font-variant-numeric:tabular-nums; color:#ff9900;"></span>
+        <button onclick="submitExam()" style="padding:7px 16px; border-radius:8px; border:none; background:#f43f5e; color:white; cursor:pointer; font-weight:700; font-size:0.85rem;">제출하기</button>
+    </div>
+</div>
+
 </body>
 </html>
