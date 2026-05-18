@@ -489,17 +489,31 @@
 <div class="main-wrapper">
     <!-- 서비스 필터 사이드바 -->
     <div class="service-sidebar" id="service-sidebar">
-        <div class="service-title">AWS Service Filtering</div>
+        <div class="service-title">Filter</div>
+        <!-- 탭 -->
+        <div style="display:flex; gap:6px; padding:0 15px 10px 15px; border-bottom:1px solid rgba(226,232,240,0.5);">
+            <button id="tab-service" onclick="switchTab('service')" style="flex:1; padding:8px; border-radius:8px; border:none; background:#ff9900; color:white; cursor:pointer; font-weight:700; font-size:0.82rem;">🔧 서비스</button>
+            <button id="tab-domain" onclick="switchTab('domain')" style="flex:1; padding:8px; border-radius:8px; border:1px solid rgba(203,213,225,0.7); background:rgba(255,255,255,0.5); color:#64748b; cursor:pointer; font-weight:600; font-size:0.82rem;">📚 도메인</button>
+        </div>
         <div class="service-search-box">
-            <input type="text" id="svc-search" placeholder="서비스 검색 (S3, EC2...)..." onkeyup="filterServiceButtons()"
+            <input type="text" id="svc-search" placeholder="검색..." onkeyup="filterServiceButtons()"
                 style="width:100%; padding:8px; border-radius:8px; border:1px solid #cbd5e1;">
         </div>
-        <div class="service-scroll-area">
+        <!-- 서비스 탭 -->
+        <div class="service-scroll-area" id="tab-panel-service">
             <button class="service-btn active" onclick="filterByService('All')">
                 <span>All Services</span>
                 <span class="svc-count" id="all-count">0</span>
             </button>
             <div id="service-list"></div>
+        </div>
+        <!-- 도메인 탭 -->
+        <div class="service-scroll-area" id="tab-panel-domain" style="display:none;">
+            <button class="service-btn active" id="domain-all-btn" onclick="filterByDomain(0)">
+                <span>All Domains</span>
+                <span class="svc-count" id="domain-all-count">0</span>
+            </button>
+            <div id="domain-list"></div>
         </div>
     </div>
 
@@ -509,7 +523,10 @@
             <span>AWS SAA-C03 Exam Simulator</span>
             <div style="display:flex; align-items:center; gap:12px;">
                 <button class="bookmark-btn" id="bookmark-btn" onclick="toggleBookmark()" title="북마크">🔖</button>
-                <div class="timer-wrap" id="timer-wrap">⏱ <span id="timer-display">00:00</span></div>
+                <div class="timer-wrap" id="timer-wrap" style="gap:6px;">
+                    <button id="pause-btn" onclick="togglePause()" style="background:none;border:none;cursor:pointer;font-size:1rem;padding:2px 4px;opacity:0.7;" title="일시정지">⏸</button>
+                    ⏱ <span id="timer-display">00:00</span>
+                </div>
             </div>
         </h1>
 
@@ -598,6 +615,7 @@
             originalData = data;
             quizData = data;
             createServiceButtons();
+            createDomainButtons();
             updateWrongCount();
             renderList();
             renderQuestion();
@@ -605,15 +623,40 @@
         });
 
     // ====== 타이머 ======
+    let timerPaused = false;
+
     function startTimer() {
         clearInterval(timerInterval);
         timerSeconds = 0;
+        timerPaused = false;
+        document.getElementById('pause-btn').textContent = '⏸';
         timerInterval = setInterval(() => {
-            timerSeconds++;
-            const m = String(Math.floor(timerSeconds/60)).padStart(2,'0');
-            const s = String(timerSeconds%60).padStart(2,'0');
-            document.getElementById('timer-display').textContent = `${m}:${s}`;
+            if (!timerPaused) {
+                timerSeconds++;
+                const m = String(Math.floor(timerSeconds/60)).padStart(2,'0');
+                const s = String(timerSeconds%60).padStart(2,'0');
+                document.getElementById('timer-display').textContent = `${m}:${s}`;
+            }
         }, 1000);
+    }
+
+    function togglePause() {
+        timerPaused = !timerPaused;
+        const btn = document.getElementById('pause-btn');
+        btn.textContent = timerPaused ? '▶️' : '⏸';
+        // 일시정지 중 문제 가리기
+        const qArea = document.getElementById('question-area');
+        if (timerPaused) {
+            qArea.dataset.origHtml = qArea.innerHTML;
+            qArea.innerHTML = `<div style="text-align:center; padding:60px 20px; color:#94a3b8;">
+                <div style="font-size:3rem; margin-bottom:12px;">⏸</div>
+                <div style="font-size:1.1rem; font-weight:600;">일시정지 중</div>
+                <div style="font-size:0.85rem; margin-top:8px;">▶️ 버튼을 눌러 재개하세요</div>
+            </div>`;
+            document.getElementById('result').style.display = 'none';
+        } else {
+            if (qArea.dataset.origHtml) qArea.innerHTML = qArea.dataset.origHtml;
+        }
     }
 
     // ====== 서비스 버튼 생성 ======
@@ -637,6 +680,78 @@
             btn.onclick = () => filterByService(svc);
             serviceList.appendChild(btn);
         });
+    }
+
+    // ====== 탭 전환 ======
+    let currentTab = 'service';
+    let currentDomain = 0;
+
+    function switchTab(tab) {
+        currentTab = tab;
+        document.getElementById('tab-panel-service').style.display = tab === 'service' ? 'flex' : 'none';
+        document.getElementById('tab-panel-domain').style.display = tab === 'domain' ? 'flex' : 'none';
+        document.getElementById('svc-search').placeholder = tab === 'service' ? '서비스 검색 (S3, EC2...)' : '도메인 검색...';
+
+        const tabS = document.getElementById('tab-service');
+        const tabD = document.getElementById('tab-domain');
+        if (tab === 'service') {
+            tabS.style.background = '#ff9900'; tabS.style.color = 'white'; tabS.style.border = 'none';
+            tabD.style.background = 'rgba(255,255,255,0.5)'; tabD.style.color = '#64748b'; tabD.style.border = '1px solid rgba(203,213,225,0.7)';
+        } else {
+            tabD.style.background = '#6366f1'; tabD.style.color = 'white'; tabD.style.border = 'none';
+            tabS.style.background = 'rgba(255,255,255,0.5)'; tabS.style.color = '#64748b'; tabS.style.border = '1px solid rgba(203,213,225,0.7)';
+        }
+    }
+
+    function createDomainButtons() {
+        const domainInfo = [
+            { id: 1, name: 'Domain 1', desc: 'Secure Architectures', color: '#6366f1', pct: '30%' },
+            { id: 2, name: 'Domain 2', desc: 'Resilient Architectures', color: '#10b981', pct: '26%' },
+            { id: 3, name: 'Domain 3', desc: 'High-Performing', color: '#ff9900', pct: '24%' },
+            { id: 4, name: 'Domain 4', desc: 'Cost-Optimized', color: '#f43f5e', pct: '20%' },
+        ];
+        const countMap = {1:0,2:0,3:0,4:0};
+        originalData.forEach(q => { const d = q.domain||2; countMap[d]++; });
+        document.getElementById('domain-all-count').textContent = originalData.length;
+
+        const list = document.getElementById('domain-list');
+        list.innerHTML = '';
+        domainInfo.forEach(d => {
+            const btn = document.createElement('button');
+            btn.className = 'service-btn';
+            btn.id = `domain-btn-${d.id}`;
+            btn.innerHTML = `
+                <span style="display:flex; flex-direction:column; gap:2px;">
+                    <span style="font-weight:700; color:${d.color};">${d.name} <span style="font-size:0.75rem; opacity:0.7;">(${d.pct})</span></span>
+                    <span style="font-size:0.75rem; opacity:0.8;">${d.desc}</span>
+                </span>
+                <span class="svc-count">${countMap[d.id]}</span>`;
+            btn.onclick = () => filterByDomain(d.id);
+            list.appendChild(btn);
+        });
+    }
+
+    function filterByDomain(domainId) {
+        currentDomain = domainId;
+        currentService = 'All';
+
+        // 버튼 활성화 상태
+        document.getElementById('domain-all-btn').classList.toggle('active', domainId === 0);
+        [1,2,3,4].forEach(d => {
+            const btn = document.getElementById(`domain-btn-${d}`);
+            if (btn) btn.classList.toggle('active', d === domainId);
+        });
+
+        if (domainId === 0) {
+            quizData = originalData;
+        } else {
+            quizData = originalData.filter(q => (q.domain||2) === domainId);
+        }
+        if (isRandomMode) randomOrder = shuffleArray([...Array(quizData.length).keys()]);
+        currentIdx = 0;
+        filterMode = 'all';
+        renderList();
+        renderQuestion();
     }
 
     // ====== 저장/로드 (localStorage) ======
@@ -964,11 +1079,18 @@
 
     function filterServiceButtons() {
         const keyword = document.getElementById('svc-search').value.toLowerCase();
-        const allBtn = document.querySelector('.service-scroll-area > .service-btn');
-        allBtn.style.display = 'all services'.includes(keyword) ? 'flex' : 'none';
-        document.querySelectorAll('#service-list .service-btn').forEach(btn => {
-            btn.style.display = btn.querySelector('span').innerText.toLowerCase().includes(keyword) ? 'flex' : 'none';
-        });
+        if (currentTab === 'service') {
+            const allBtn = document.querySelector('#tab-panel-service > .service-btn');
+            if (allBtn) allBtn.style.display = 'all services'.includes(keyword) ? 'flex' : 'none';
+            document.querySelectorAll('#service-list .service-btn').forEach(btn => {
+                btn.style.display = btn.querySelector('span').innerText.toLowerCase().includes(keyword) ? 'flex' : 'none';
+            });
+        } else {
+            document.getElementById('domain-all-btn').style.display = 'all domains'.includes(keyword) ? 'flex' : 'none';
+            document.querySelectorAll('#domain-list .service-btn').forEach(btn => {
+                btn.style.display = btn.innerText.toLowerCase().includes(keyword) ? 'flex' : 'none';
+            });
+        }
     }
 
     // ====== 오답 삭제 ======
