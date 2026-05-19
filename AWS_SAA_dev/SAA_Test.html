@@ -735,11 +735,10 @@
         .toast.show { transform: translateX(-50%) translateY(0); }
     </style>
     <!-- Firebase SDK -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-        import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-        import { getFirestore, doc, setDoc, getDoc, updateDoc, merge } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+    <script>
         const firebaseConfig = {
             apiKey: "AIzaSyBX2DbgQtXrWcYAe21xn5wHafB9JUSE_os",
             authDomain: "saa-test-8254d.firebaseapp.com",
@@ -749,17 +748,17 @@
             appId: "1:514676672506:web:89cfe7a4f224b1ec2e8643"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const provider = new GoogleAuthProvider();
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const provider = new firebase.auth.GoogleAuthProvider();
 
         let currentUser = null;
 
         // ===== 로그인 =====
         window.firebaseLogin = async function() {
             try {
-                const result = await signInWithPopup(auth, provider);
+                const result = await auth.signInWithPopup(provider);
                 showToast('✅ ' + result.user.displayName + '님 로그인!');
             } catch(e) {
                 showToast('❌ 로그인 실패: ' + e.message);
@@ -767,12 +766,12 @@
         };
 
         window.firebaseLogout = async function() {
-            await signOut(auth);
+            await auth.signOut();
             showToast('로그아웃 완료');
         };
 
         // ===== 유저 상태 감지 =====
-        onAuthStateChanged(auth, async (user) => {
+        auth.onAuthStateChanged(async (user) => {
             currentUser = user;
             updateLoginUI(user);
             if (user) await loadUserData(user.uid);
@@ -797,8 +796,8 @@
         window.saveToFirebase = async function(data) {
             if (!currentUser) return;
             try {
-                const ref = doc(db, 'users', currentUser.uid);
-                await setDoc(ref, data, { merge: true });
+                const ref = db.collection('users').doc(currentUser.uid);
+                await ref.set(data, { merge: true });
             } catch(e) {
                 console.error('저장 실패:', e);
             }
@@ -807,8 +806,8 @@
         // ===== Firestore 로드 =====
         async function loadUserData(uid) {
             try {
-                const ref = doc(db, 'users', uid);
-                const snap = await getDoc(ref);
+                const ref = db.collection('users').doc(uid);
+                const snap = await ref.get();
                 if (snap.exists()) {
                     const data = snap.data();
                     // localStorage에 동기화
