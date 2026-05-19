@@ -754,6 +754,7 @@
         const provider = new firebase.auth.GoogleAuthProvider();
 
         let currentUser = null;
+        window._fbUser = null;
 
         // ===== 로그인 =====
         window.firebaseLogin = async function() {
@@ -816,6 +817,7 @@
         // ===== 유저 상태 감지 =====
         auth.onAuthStateChanged(async (user) => {
             currentUser = user;
+            window._fbUser = user;
             updateLoginUI(user);
             if (user) await loadUserData(user.uid);
         });
@@ -867,20 +869,6 @@
                 console.error('로드 실패:', e);
             }
         }
-
-        // ===== 자동 저장 훅 =====
-        // saveWrongNotes, saveBookmarks 함수 오버라이드
-        const _origSaveWN = window.saveWrongNotes;
-        window.saveWrongNotes = function(arr) {
-            localStorage.setItem('saa_wrong_notes', JSON.stringify(arr));
-            if (currentUser) window.saveToFirebase({ wrong_notes: arr });
-        };
-
-        const _origSaveBM = window.saveBookmarks;
-        window.saveBookmarks = function(arr) {
-            localStorage.setItem('saa_bookmarks', JSON.stringify(arr));
-            if (currentUser) window.saveToFirebase({ bookmarks: arr });
-        };
 
         // answer_history 자동 저장
         const origSetItem = localStorage.setItem.bind(localStorage);
@@ -1189,9 +1177,15 @@
 
     // ====== 저장/로드 (localStorage) ======
     function getWrongNotes() { return JSON.parse(localStorage.getItem('saa_wrong_notes') || '[]'); }
-    function saveWrongNotes(arr) { localStorage.setItem('saa_wrong_notes', JSON.stringify(arr)); }
+    function saveWrongNotes(arr) {
+        localStorage.setItem('saa_wrong_notes', JSON.stringify(arr));
+        if (window._fbUser && window.saveToFirebase) window.saveToFirebase({ wrong_notes: arr });
+    }
     function getBookmarks() { return JSON.parse(localStorage.getItem('saa_bookmarks') || '[]'); }
-    function saveBookmarks(arr) { localStorage.setItem('saa_bookmarks', JSON.stringify(arr)); }
+    function saveBookmarks(arr) {
+        localStorage.setItem('saa_bookmarks', JSON.stringify(arr));
+        if (window._fbUser && window.saveToFirebase) window.saveToFirebase({ bookmarks: arr });
+    }
 
     function saveToWrongNotes(questionId) {
         let wn = getWrongNotes();
