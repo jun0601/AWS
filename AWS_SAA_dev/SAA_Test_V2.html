@@ -759,9 +759,52 @@
         window.firebaseLogin = async function() {
             try {
                 const result = await auth.signInWithPopup(provider);
-                showToast('✅ ' + result.user.displayName + '님 로그인!');
+                const user = result.user;
+                showToast('✅ ' + user.displayName + '님 로그인!');
+
+                // 로그인 후 기존 localStorage 데이터를 Firebase로 업로드
+                const localWrong = JSON.parse(localStorage.getItem('saa_wrong_notes') || '[]');
+                const localBM = JSON.parse(localStorage.getItem('saa_bookmarks') || '[]');
+                const localHistory = JSON.parse(localStorage.getItem('saa_answer_history') || '{}');
+
+                // Firebase에서 기존 클라우드 데이터 가져오기
+                const ref = db.collection('users').doc(user.uid);
+                const snap = await ref.get();
+
+                if (snap.exists()) {
+                    const cloudData = snap.data();
+                    // 로컬 + 클라우드 병합 (중복 제거)
+                    const mergedWrong = [...new Set([...(cloudData.wrong_notes || []), ...localWrong])];
+                    const mergedBM = [...new Set([...(cloudData.bookmarks || []), ...localBM])];
+                    const mergedHistory = { ...(cloudData.answer_history || {}), ...localHistory };
+
+                    await ref.set({
+                        wrong_notes: mergedWrong,
+                        bookmarks: mergedBM,
+                        answer_history: mergedHistory
+                    }, { merge: true });
+
+                    // localStorage도 병합된 데이터로 업데이트
+                    localStorage.setItem('saa_wrong_notes', JSON.stringify(mergedWrong));
+                    localStorage.setItem('saa_bookmarks', JSON.stringify(mergedBM));
+                    localStorage.setItem('saa_answer_history', JSON.stringify(mergedHistory));
+                } else {
+                    // 클라우드에 데이터 없으면 로컬 데이터 그대로 업로드
+                    await ref.set({
+                        wrong_notes: localWrong,
+                        bookmarks: localBM,
+                        answer_history: localHistory
+                    });
+                }
+
+                // UI 갱신
+                if (typeof updateWrongCount === 'function') updateWrongCount();
+                if (typeof renderList === 'function') renderList();
+                if (typeof updateStats === 'function') updateStats();
+                showToast('☁️ 기존 기록 클라우드에 동기화 완료!');
             } catch(e) {
                 showToast('❌ 로그인 실패: ' + e.message);
+                console.error(e);
             }
         };
 
