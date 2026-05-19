@@ -652,6 +652,10 @@
             background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
             color: #f1f5f9;
         }
+
+        body.dark-mode #user-info { background: rgba(30,41,59,0.95); }
+        body.dark-mode #user-name { color: #f1f5f9; }
+
         body.dark-mode .quiz-container,
         body.dark-mode .sidebar,
         body.dark-mode .service-sidebar {
@@ -730,8 +734,138 @@
         }
         .toast.show { transform: translateX(-50%) translateY(0); }
     </style>
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, updateDoc, merge } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBX2DbgQtXrWcYAe21xn5wHafB9JUSE_os",
+            authDomain: "saa-test-8254d.firebaseapp.com",
+            projectId: "saa-test-8254d",
+            storageBucket: "saa-test-8254d.firebasestorage.app",
+            messagingSenderId: "514676672506",
+            appId: "1:514676672506:web:89cfe7a4f224b1ec2e8643"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const provider = new GoogleAuthProvider();
+
+        let currentUser = null;
+
+        // ===== 로그인 =====
+        window.firebaseLogin = async function() {
+            try {
+                const result = await signInWithPopup(auth, provider);
+                showToast('✅ ' + result.user.displayName + '님 로그인!');
+            } catch(e) {
+                showToast('❌ 로그인 실패: ' + e.message);
+            }
+        };
+
+        window.firebaseLogout = async function() {
+            await signOut(auth);
+            showToast('로그아웃 완료');
+        };
+
+        // ===== 유저 상태 감지 =====
+        onAuthStateChanged(auth, async (user) => {
+            currentUser = user;
+            updateLoginUI(user);
+            if (user) await loadUserData(user.uid);
+        });
+
+        function updateLoginUI(user) {
+            const btn = document.getElementById('login-btn');
+            const info = document.getElementById('user-info');
+            if (!btn) return;
+            if (user) {
+                btn.style.display = 'none';
+                info.style.display = 'flex';
+                document.getElementById('user-name').textContent = user.displayName;
+                document.getElementById('user-avatar').src = user.photoURL || '';
+            } else {
+                btn.style.display = 'block';
+                info.style.display = 'none';
+            }
+        }
+
+        // ===== Firestore 저장 =====
+        window.saveToFirebase = async function(data) {
+            if (!currentUser) return;
+            try {
+                const ref = doc(db, 'users', currentUser.uid);
+                await setDoc(ref, data, { merge: true });
+            } catch(e) {
+                console.error('저장 실패:', e);
+            }
+        };
+
+        // ===== Firestore 로드 =====
+        async function loadUserData(uid) {
+            try {
+                const ref = doc(db, 'users', uid);
+                const snap = await getDoc(ref);
+                if (snap.exists()) {
+                    const data = snap.data();
+                    // localStorage에 동기화
+                    if (data.wrong_notes) localStorage.setItem('saa_wrong_notes', JSON.stringify(data.wrong_notes));
+                    if (data.bookmarks) localStorage.setItem('saa_bookmarks', JSON.stringify(data.bookmarks));
+                    if (data.answer_history) localStorage.setItem('saa_answer_history', JSON.stringify(data.answer_history));
+                    // UI 갱신
+                    if (typeof updateWrongCount === 'function') updateWrongCount();
+                    if (typeof renderList === 'function') renderList();
+                    if (typeof updateStats === 'function') updateStats();
+                    showToast('☁️ 클라우드 데이터 불러오기 완료!');
+                }
+            } catch(e) {
+                console.error('로드 실패:', e);
+            }
+        }
+
+        // ===== 자동 저장 훅 =====
+        // saveWrongNotes, saveBookmarks 함수 오버라이드
+        const _origSaveWN = window.saveWrongNotes;
+        window.saveWrongNotes = function(arr) {
+            localStorage.setItem('saa_wrong_notes', JSON.stringify(arr));
+            if (currentUser) window.saveToFirebase({ wrong_notes: arr });
+        };
+
+        const _origSaveBM = window.saveBookmarks;
+        window.saveBookmarks = function(arr) {
+            localStorage.setItem('saa_bookmarks', JSON.stringify(arr));
+            if (currentUser) window.saveToFirebase({ bookmarks: arr });
+        };
+
+        // answer_history 자동 저장
+        const origSetItem = localStorage.setItem.bind(localStorage);
+        localStorage.setItem = function(key, value) {
+            origSetItem(key, value);
+            if (key === 'saa_answer_history' && currentUser) {
+                try {
+                    window.saveToFirebase({ answer_history: JSON.parse(value) });
+                } catch(e) {}
+            }
+        };
+    </script>
+
 </head>
 <body>
+<div id="firebase-ui" style="position:fixed; top:16px; left:20px; z-index:1000; display:flex; align-items:center; gap:10px;">
+    <button id="login-btn" onclick="firebaseLogin()" style="padding:8px 16px; border-radius:50px; border:none; background:#4285f4; color:white; cursor:pointer; font-weight:700; font-size:0.82rem; box-shadow:0 2px 8px rgba(0,0,0,0.2); display:flex; align-items:center; gap:6px;">
+        <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.1-4z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.1 18.9 12 24 12c3 0 5.7 1.1 7.8 2.9l5.7-5.7C34.1 6.5 29.3 4 24 4 16.3 4 9.7 8.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.4 35.6 26.8 36 24 36c-5.2 0-9.6-2.9-11.3-7.1l-6.6 5C9.6 39.5 16.3 44 24 44z"/><path fill="#1976D2" d="M43.6 20H24v8h11.3c-.9 2.5-2.6 4.6-4.8 6l6.2 5.2C40.5 35.9 44 30.4 44 24c0-1.3-.1-2.7-.4-4z"/></svg>
+        Google 로그인
+    </button>
+    <div id="user-info" style="display:none; align-items:center; gap:8px; background:rgba(255,255,255,0.9); padding:6px 12px 6px 6px; border-radius:50px; box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+        <img id="user-avatar" width="28" height="28" style="border-radius:50%;" src="">
+        <span id="user-name" style="font-size:0.82rem; font-weight:700; color:#334155;"></span>
+        <button onclick="firebaseLogout()" style="background:none; border:none; cursor:pointer; color:#94a3b8; font-size:0.75rem; font-weight:600;">로그아웃</button>
+    </div>
+</div>
+
 <button class="dark-mode-toggle" onclick="toggleDarkMode()" id="mode-btn">🌙 Dark Mode</button>
 <div class="toast" id="toast"></div>
 
