@@ -1443,8 +1443,13 @@
         document.querySelectorAll('.option-item').forEach(el => {
             el.classList.add('disabled');
             const key = el.id.replace('opt-', '');
-            if (correctAnswers.includes(key)) el.classList.add('answer-correct');
-            else if (userAnswers.includes(key) && !correctAnswers.includes(key)) el.classList.add('answer-wrong');
+            if (correctAnswers.includes(key)) {
+                el.classList.add('answer-correct');
+                el.innerHTML += '<span style="display:block;font-size:0.78rem;margin-top:6px;opacity:0.85;">✅ 정답 보기</span>';
+            } else if (userAnswers.includes(key) && !correctAnswers.includes(key)) {
+                el.classList.add('answer-wrong');
+                el.innerHTML += '<span style="display:block;font-size:0.78rem;margin-top:6px;opacity:0.85;">❌ 잘못 선택한 보기</span>';
+            }
         });
 
         // 정답 히스토리 저장
