@@ -993,7 +993,7 @@
         </div>
         <button onclick="openStudyTab()" style="width:100%; margin-bottom:8px; background:linear-gradient(135deg,#10b981,#0ea5e9); color:white; border:none; font-size:0.85rem; padding:10px; border-radius:9px; cursor:pointer; font-weight:700;">📖 서비스 노트 학습</button>
         <button onclick="openExamModal()" style="width:100%; margin-bottom:10px; background: linear-gradient(135deg,#6366f1,#ff9900); color:white; border:none; font-size:0.85rem; padding:10px; border-radius:9px; cursor:pointer; font-weight:700;">
-            📝 모의고사 시작 (65문제 / 130분)
+            📝 모의고사 시작 (65문제 / 170분)
         </button>
 
         <div class="filter-container">
@@ -1601,7 +1601,7 @@
     let examQuestions = [];
     let examAnswers = {};
     let examTimerInterval = null;
-    let examSeconds = 130 * 60;
+    let examSeconds = 170 * 60;
 
     const DOMAIN_TARGETS = { 1: 20, 2: 17, 3: 16, 4: 12 };
     const DOMAIN_NAMES = {
@@ -1644,7 +1644,7 @@
 
         examAnswers = {};
         examMode = true;
-        examSeconds = 130 * 60;
+        examSeconds = 170 * 60;
 
         closeExamModal();
 
@@ -2274,7 +2274,7 @@
             <h2 style="margin-top:0; font-size:1.4rem;">📝 SAA-C03 모의고사</h2>
             <p style="color:#64748b; font-size:0.9rem; line-height:1.7;">
                 실제 시험과 동일한 도메인 비율로 <strong>65문제</strong>를 자동 추출합니다.<br>
-                제한시간 <strong>130분</strong> · 합격 기준 <strong>720점 / 1000점</strong>
+                제한시간 <strong>170분</strong> · 합격 기준 <strong>720점 / 1000점</strong>
             </p>
             <div style="background:#f1f5f9; border-radius:12px; padding:16px; margin:16px 0; font-size:0.85rem;">
                 <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
