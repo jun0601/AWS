@@ -998,6 +998,9 @@
                 const isAdminUser = u.role === 'admin';
                 const name = u.displayName || '(이름 없음)';
                 const email = u.email || '(이메일 없음)';
+                const requestedAt = (u.requestedAt && u.requestedAt.toDate)
+                    ? u.requestedAt.toDate().toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })
+                    : '';
                 const badge = isAdminUser
                     ? '<span style="font-size:0.7rem; font-weight:700; color:#6366f1; background:rgba(99,102,241,0.12); padding:2px 8px; border-radius:20px;">관리자</span>'
                     : (approved
@@ -1007,7 +1010,8 @@
                 if (!isAdminUser) {
                     actionBtn = approved
                         ? `<button onclick="toggleApprove('${u.uid}', false)" style="padding:7px 14px; border-radius:8px; border:1px solid #fca5a5; background:white; color:#b91c1c; cursor:pointer; font-weight:700; font-size:0.78rem;">승인 취소</button>`
-                        : `<button onclick="toggleApprove('${u.uid}', true)" style="padding:7px 16px; border-radius:8px; border:none; background:#10b981; color:white; cursor:pointer; font-weight:700; font-size:0.78rem;">✓ 승인</button>`;
+                        : `<button onclick="toggleApprove('${u.uid}', true)" style="padding:7px 16px; border-radius:8px; border:none; background:#10b981; color:white; cursor:pointer; font-weight:700; font-size:0.78rem;">✓ 승인</button>
+                           <button onclick="rejectUser('${u.uid}')" style="padding:7px 14px; border-radius:8px; border:1px solid #fca5a5; background:white; color:#b91c1c; cursor:pointer; font-weight:700; font-size:0.78rem;">거절</button>`;
                 }
                 return `
                 <div style="display:flex; align-items:center; gap:12px; padding:12px 14px; background:white; border:1px solid rgba(226,232,240,0.9); border-radius:12px; margin-bottom:8px;">
@@ -1017,10 +1021,24 @@
                             ${badge}
                         </div>
                         <div style="font-size:0.78rem; color:#64748b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${email}</div>
+                        <div style="font-size:0.68rem; color:#94a3b8; font-family:monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">UID: ${u.uid}${requestedAt ? ' · 요청 ' + requestedAt : ''}</div>
                     </div>
-                    ${actionBtn}
+                    <div style="display:flex; gap:6px; flex-shrink:0;">${actionBtn}</div>
                 </div>`;
             }).join('');
+        };
+
+        // 거절: 요청 문서 삭제 (해당 사용자가 다시 로그인하면 재요청됨)
+        window.rejectUser = async function(uid) {
+            if (!confirm('이 사용자의 요청과 저장된 데이터를 삭제할까요?\n(해당 사용자가 다시 로그인하면 재요청됩니다)')) return;
+            try {
+                await db.collection('users').doc(uid).delete();
+                showToast('🗑️ 거절 완료 (요청 삭제됨)');
+                renderAdminUsers();
+            } catch (e) {
+                showToast('❌ 실패: ' + e.message);
+                console.error(e);
+            }
         };
 
         window.toggleApprove = async function(uid, value) {
