@@ -202,14 +202,14 @@ Resources:
   PublicDNS:     #Route53 서비스 생성
     Type: AWS::Route53::HostedZone
     Properties:
-      Name: zxxnwood.cloud
+      Name: siseon.live
       HostedZoneConfig:
-        Comment: Public hosted zone For zxxnwood.cloud
+        Comment: Public hosted zone For siseon.live
         
   ALBAlias:     # 로드밸런서엔드포인트를 원하는 서브도메인 생성해서 연결하는것  
     Type: AWS::Route53::RecordSet
     Properties:
-      Name: alb.zxxnwood.cloud
+      Name: alb.siseon.live
       Type: A
       HostedZoneId: !Ref PublicDNS
       AliasTarget:
@@ -243,7 +243,7 @@ Resources:
   PrimaryRecordSet:
     Type: AWS::Route53::RecordSet
     Properties:
-      Name: test.zxxnwood.cloud
+      Name: test.siseon.live
       Type: A
       TTL: 30
       HostedZoneId: !Ref PublicDNS
@@ -256,7 +256,7 @@ Resources:
   SecondaryRecordSet:
     Type: AWS::Route53::RecordSet
     Properties:
-      Name: test.zxxnwood.cloud
+      Name: test.siseon.live
       Type: A
       TTL: 30
       HostedZoneId: !Ref PublicDNS

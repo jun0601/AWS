@@ -214,9 +214,9 @@ Resources:
   PublicDNS:     #Public DNS 영역 생성 
     Type: AWS::Route53::HostedZone
     Properties:
-      Name: zxxnwood.cloud
+      Name: siseon.live
       HostedZoneConfig:
-        Comment: Public hosted zone For zxxnwood.cloud
+        Comment: Public hosted zone For siseon.live
           
   
 Outputs:     #각 EC2 Public&Private IP 추출
